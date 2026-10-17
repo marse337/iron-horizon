@@ -11,6 +11,7 @@ const ExplosionManagerScript = preload("res://scripts/explosion_manager.gd")
 const CombatManagerScript = preload("res://scripts/combat_manager.gd")
 const BunkerTurretScript = preload("res://scripts/bunker_turret.gd")
 const HudControllerScript = preload("res://scripts/hud_controller.gd")
+const TouchControlsScript = preload("res://scripts/touch_controls.gd")
 
 enum GameState {
 	TITLE,
@@ -28,6 +29,7 @@ var fx: Node3D
 var combat: Node3D
 var turret: Node3D
 var hud: Control
+var touch: Control
 
 var world_env: WorldEnvironment
 var sun_light: DirectionalLight3D
@@ -45,6 +47,8 @@ var current_wave: int = 1
 
 var _sam_queued: bool = false
 var _flare_queued: bool = false
+# Real (non-touch-emulated) left mouse button, so touching the screen never fires
+var _mouse_fire_held: bool = false
 var _wave_time: float = 0.0
 
 func _ready() -> void:
@@ -86,6 +90,15 @@ func _ready() -> void:
 	hud.combat = combat
 	hud.high_score = high_score
 	canvas.add_child(hud)
+
+	touch = TouchControlsScript.new()
+	touch.name = "TouchControls"
+	touch.turret = turret
+	touch.touch_mode_enabled.connect(_on_touch_mode_enabled)
+	touch.pause_pressed.connect(func() -> void:
+		if state == GameState.PLAYING:
+			_enter_state(GameState.PAUSED))
+	canvas.add_child(touch)
 
 	_connect_signals()
 	_apply_time_of_day(1)
@@ -204,14 +217,24 @@ func _connect_signals() -> void:
 	combat.wave_quota_updated.connect(_on_wave_quota_updated)
 	combat.wave_completed.connect(_on_wave_completed)
 
+func _on_touch_mode_enabled() -> void:
+	hud.touch_mode = true
+	# Slightly larger UI on touch screens so HUD text and menus are readable on phones
+	get_tree().root.content_scale_factor = 1.15
+
 func _enter_state(new_state: int) -> void:
 	state = new_state
+	_mouse_fire_held = false
+	touch.set_active(state == GameState.PLAYING)
 	match state:
 		GameState.TITLE:
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 			hud.set_menu_state("title")
 		GameState.PLAYING:
-			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+			# No pointer lock on touch devices; a touch laptop's first real mouse
+			# click still captures the pointer (see _unhandled_input)
+			if not touch.touch_mode:
+				Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 			hud.set_menu_state("none")
 		GameState.SHOP:
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
@@ -374,11 +397,18 @@ func _unhandled_input(event: InputEvent) -> void:
 				_enter_state(GameState.PLAYING)
 		return
 
+	# Browsers synthesize mouse events from touches; touch input is handled by
+	# TouchControls instead, so drop the copies (they caused double-speed aim
+	# and fired the gun whenever a finger was down)
+	if event is InputEventMouse and event.device == InputEvent.DEVICE_ID_EMULATION:
+		return
+
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		_mouse_fire_held = event.pressed
+
 	if event is InputEventMouseMotion:
-		if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+		if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED or _mouse_fire_held or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 			turret.apply_mouse_delta(event.relative)
-	elif event is InputEventScreenDrag:
-		turret.apply_mouse_delta(event.relative)
 	elif event is InputEventMouseButton and event.pressed:
 		if Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
@@ -412,8 +442,10 @@ func _process(delta: float) -> void:
 		shoreline_foam.position.z = -82.0 + sin(_wave_time * 1.6) * 2.2
 
 	if state == GameState.PLAYING:
-		var firing_primary: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) \
+		var firing_primary: bool = _mouse_fire_held or touch.fire_held \
 				or Input.is_physical_key_pressed(KEY_ENTER) or Input.is_physical_key_pressed(KEY_KP_ENTER)
+		_sam_queued = touch.consume_sam() or _sam_queued
+		_flare_queued = touch.consume_flare() or _flare_queued
 		turret.process_turret(delta, firing_primary, _sam_queued, _flare_queued)
 		_sam_queued = false
 		_flare_queued = false

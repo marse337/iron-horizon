@@ -27,6 +27,8 @@ var current_wave: int = 1
 var time_of_day_name: String = "0600 HRS - DAWN ASSAULT"
 var wave_killed: int = 0
 var wave_total: int = 20
+# Set when a touchscreen is detected: radar moves top-right to make room for touch buttons
+var touch_mode: bool = false
 
 # Transient HUD feedback timers
 var _hitmarker_timer: float = 0.0
@@ -150,7 +152,12 @@ func _draw() -> void:
 		var b_rect := Rect2(center.x - 310.0, 96.0, 620.0, 38.0)
 		draw_rect(b_rect, Color(0.06, 0.10, 0.06, 0.82), true)
 		draw_rect(b_rect, Color(_banner_color.r, _banner_color.g, _banner_color.b, pulse), false, 2.0)
-		draw_string(font, Vector2(center.x - 295.0, 121.0), _banner_text, HORIZONTAL_ALIGNMENT_CENTER, 590.0, 18, _banner_color)
+		# Shrink long banners to fit the box instead of clipping them
+		var b_size: int = 18
+		var b_w: float = font.get_string_size(_banner_text, HORIZONTAL_ALIGNMENT_LEFT, -1, b_size).x
+		if b_w > 590.0:
+			b_size = maxi(11, int(floor(b_size * 590.0 / b_w)))
+		draw_string(font, Vector2(center.x - 295.0, 121.0), _banner_text, HORIZONTAL_ALIGNMENT_CENTER, 590.0, b_size, _banner_color)
 
 	if _ricochet_warn_timer > 0.0:
 		var r_col := Color(1.0, 0.42, 0.15, clampf(_ricochet_warn_timer, 0.0, 1.0))
@@ -322,12 +329,16 @@ func _draw_bottom_left_status(vp: Vector2, font: Font) -> void:
 
 	draw_string(font, Vector2(28.0, vp.y - 88.0), "[1/SPACE] 30MM MG: %04d   |   [2/SPACE] %s: %02d" % [turret.mg_ammo, "155MM CG" if turret.heavy_gun else "105MM AT", turret.cannon_ammo], HORIZONTAL_ALIGNMENT_LEFT, 355.0, 14, mg_col if turret.current_weapon == 0 else can_col)
 	draw_string(font, Vector2(28.0, vp.y - 66.0), "[RMB / M] HOMING SAMs: %02d   |   [F] NIGHT FLARES: %02d" % [turret.sam_ammo, turret.flare_ammo], HORIZONTAL_ALIGNMENT_LEFT, 355.0, 14, sam_col)
-	draw_string(font, Vector2(28.0, vp.y - 44.0), "[3] 9MM BACKUP: INF   |   [ESC] PAUSE / SENSITIVITY", HORIZONTAL_ALIGNMENT_LEFT, 355.0, 12, Color(0.58, 0.78, 0.55))
+	draw_string(font, Vector2(28.0, vp.y - 44.0), "TOUCH: DRAG TO AIM  |  HOLD FIRE  |  SWAP / SAM / FLARE" if touch_mode else "[3] 9MM BACKUP: INF   |   [ESC] PAUSE / SENSITIVITY", HORIZONTAL_ALIGNMENT_LEFT, 355.0, 12, Color(0.58, 0.78, 0.55))
 	draw_string(font, Vector2(28.0, vp.y - 24.0), "TIP: SHOOT PARACHUTE SUPPLY CRATES IN MID-AIR!", HORIZONTAL_ALIGNMENT_LEFT, 355.0, 12, Color(0.95, 0.85, 0.32))
 
 func _draw_radar_scope(vp: Vector2, font: Font) -> void:
 	var r_radius: float = 82.0
 	var r_center := Vector2(vp.x - r_radius - 24.0, vp.y - r_radius - 24.0)
+	if touch_mode:
+		# Top-left under the score panel: the right side belongs to the touch buttons
+		r_radius = 70.0
+		r_center = Vector2(24.0 + r_radius, 112.0 + r_radius)
 
 	draw_circle(r_center, r_radius + 4.0, Color(0.04, 0.08, 0.05, 0.88))
 	draw_arc(r_center, r_radius, 0.0, TAU, 48, Color(0.35, 0.85, 0.32, 0.9), 2.0)
@@ -381,7 +392,8 @@ func _build_menus() -> void:
 	_add_label(tv, "360° COASTAL BUNKER DEFENSE  —  CLASSIC MILITARY ARCADE EDITION", 15, Color(0.95, 0.85, 0.35))
 	_add_label(tv,
 		"TACTICAL BRIEFING & CONTROLS:\n" +
-		"• MOUSE / TOUCH DRAG / WASD: Rotate Turret 360° Horizontally & Pitch Up/Down\n" +
+		"• MOUSE / WASD: Rotate Turret 360° Horizontally & Pitch Up/Down\n" +
+		"• TOUCH: Drag anywhere to aim, hold FIRE, tap SWAP / SAM / FLARE buttons\n" +
 		"• LEFT CLICK / [ENTER] (HOLD): Fire Active Primary Weapon\n" +
 		"• [SPACE] / [Q] / [1, 2]: Switch between Dual 30mm Autocannon & 105mm Anti-Tank Howitzer\n" +
 		"• RIGHT CLICK / [M]: Fire Guided Surface-to-Air Missile (Wait for Red Lock-On Tone!)\n" +
