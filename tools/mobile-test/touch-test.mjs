@@ -98,6 +98,7 @@ async function openTarget() {
       const page = ctx.pages().find((p) => p.url().includes("iron-horizon")) || ctx.pages()[0] || (await ctx.newPage());
       await page.bringToFront();
       const cdp = await ctx.newCDPSession(page);
+      await cdp.send("Network.setCacheDisabled", { cacheDisabled: true }); // always test the latest deploy
       return { browser, ctx, page, touch: new CdpTouch(cdp), canRotate: false, adb };
     }
     default:
