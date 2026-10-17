@@ -48,6 +48,7 @@ func _build_all_sounds() -> void:
 	_streams["bunker_hit"] = _make_bunker_hit()
 	_streams["flare_launch"] = _make_flare_launch()
 	_streams["wave_clear"] = _make_wave_clear()
+	_streams["air_raid"] = _make_air_raid_siren()
 
 func _create_wav(samples: PackedFloat32Array) -> AudioStreamWAV:
 	var wav := AudioStreamWAV.new()
@@ -141,6 +142,24 @@ func _make_tone_beep(freq: float, duration: float, amp: float) -> AudioStreamWAV
 		var t: float = float(i) / float(MIX_RATE)
 		var env: float = clampf(1.0 - (t / duration) * 0.5, 0.0, 1.0)
 		out[i] = (sin(t * freq * TAU) * 0.7 + signf(sin(t * freq * TAU)) * 0.3) * env * amp
+	return _create_wav(out)
+
+## Two rising/falling siren sweeps (air-raid warning when jets appear on radar).
+## Phase is accumulated so the frequency sweep stays click-free.
+func _make_air_raid_siren() -> AudioStreamWAV:
+	var duration: float = 1.6
+	var count: int = int(MIX_RATE * duration)
+	var out := PackedFloat32Array()
+	out.resize(count)
+	var phase: float = 0.0
+	for i in range(count):
+		var t: float = float(i) / float(MIX_RATE)
+		var sweep: float = 0.5 - 0.5 * cos(t / 0.8 * TAU)  # 0 -> 1 -> 0 every 0.8 s
+		var freq: float = lerpf(540.0, 980.0, sweep)
+		phase += freq / float(MIX_RATE)
+		var wave: float = sin(phase * TAU) * 0.75 + signf(sin(phase * TAU)) * 0.25
+		var env: float = clampf(t / 0.05, 0.0, 1.0) * clampf((duration - t) / 0.15, 0.0, 1.0)
+		out[i] = wave * env * 0.32
 	return _create_wav(out)
 
 func _make_dual_beep(f1: float, f2: float, duration: float, amp: float) -> AudioStreamWAV:

@@ -42,8 +42,8 @@ var mg_ammo: int = 900
 var max_mg_ammo: int = 1200
 var cannon_ammo: int = 55
 var max_cannon_ammo: int = 75
-var sam_ammo: int = 12
-var max_sam_ammo: int = 18
+var sam_ammo: int = 4
+var max_sam_ammo: int = 8
 var flare_ammo: int = 4
 var max_flare_ammo: int = 6
 
@@ -152,11 +152,11 @@ func reset_for_new_game() -> void:
 	pitch_pivot.rotation.x = pitch
 	max_mg_ammo = 1200
 	max_cannon_ammo = 75
-	max_sam_ammo = 18
+	max_sam_ammo = 8
 	max_flare_ammo = 6
 	mg_ammo = 900
 	cannon_ammo = 55
-	sam_ammo = 12
+	sam_ammo = 4
 	flare_ammo = 4
 	mg_fire_rate_mult = 1.0
 	cannon_reload_mult = 1.0
@@ -178,7 +178,7 @@ func set_heavy_gun(enabled: bool) -> void:
 func refill_for_wave() -> void:
 	mg_ammo = mini(max_mg_ammo, mg_ammo + 550)
 	cannon_ammo = mini(max_cannon_ammo, cannon_ammo + 28)
-	sam_ammo = mini(max_sam_ammo, sam_ammo + 6)
+	sam_ammo = mini(max_sam_ammo, sam_ammo + 2)
 	flare_ammo = mini(max_flare_ammo, flare_ammo + 2)
 	if current_weapon == PrimaryWeapon.BACKUP_PISTOL and (mg_ammo > 0 or cannon_ammo > 0):
 		current_weapon = PrimaryWeapon.MG_30MM if mg_ammo > 0 else PrimaryWeapon.AT_CANNON
@@ -188,7 +188,7 @@ func refill_for_wave() -> void:
 func grant_supply_crate(is_golden: bool) -> void:
 	mg_ammo = mini(max_mg_ammo, mg_ammo + 320)
 	cannon_ammo = mini(max_cannon_ammo, cannon_ammo + 18)
-	sam_ammo = mini(max_sam_ammo, sam_ammo + 4)
+	sam_ammo = mini(max_sam_ammo, sam_ammo + 1)
 	flare_ammo = mini(max_flare_ammo, flare_ammo + 1)
 	if is_golden:
 		overdrive_timer = 8.5

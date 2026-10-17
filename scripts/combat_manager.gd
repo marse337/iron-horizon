@@ -9,6 +9,8 @@ const UnitFactoryScript = preload("res://scripts/unit_factory.gd")
 signal enemy_killed(unit_type: String, world_pos: Vector3, points: int, bonus_label: String)
 signal armor_ricochet(world_pos: Vector3)
 signal hull_deflected(world_pos: Vector3)
+signal air_armor_deflected(world_pos: Vector3)
+signal air_raid_incoming(world_pos: Vector3)
 signal supply_claimed(world_pos: Vector3, is_golden: bool)
 signal supply_lost(world_pos: Vector3)
 signal supply_plane_inbound()
@@ -191,7 +193,7 @@ func _build_wave_plan(w: int) -> void:
 		[UnitType.ATTACK_HELI, 4, 4, 1.5 + w * 0.1],
 		[UnitType.TANK, 6, 5, 1.0 + w * 0.15],
 		[UnitType.TRANSPORT_HELI, 5, 6, 1.2],
-		[UnitType.FIGHTER_JET, 4, 7, 1.0 + w * 0.1],
+		[UnitType.FIGHTER_JET, 4, 3, 1.0 + w * 0.1],
 	]
 	var budget: int = 12 + w * 5
 	var intro: Dictionary = {}
@@ -335,10 +337,19 @@ func spawn_transport_run(drops: int) -> Dictionary:
 	u["drop_timer"] = _rng.randf_range(2.2, 3.5)
 	return u
 
+## Jets start far out so they're visible crossing the sky, and the radar raises
+## an air-raid warning the moment they appear (~7 s before they can attack)
+const JET_SPAWN_DIST := 520.0
+const JET_ATTACK_DIST := 165.0
+
 func spawn_fighter_jet_pass() -> Dictionary:
-	var start_pos: Vector3 = _heading_out(12.0) * 340.0
-	start_pos.y = _rng.randf_range(75.0, 108.0)
-	return spawn_unit(UnitType.FIGHTER_JET, start_pos)
+	var start_pos: Vector3 = _heading_out(12.0) * JET_SPAWN_DIST
+	start_pos.y = _rng.randf_range(70.0, 100.0)
+	var u: Dictionary = spawn_unit(UnitType.FIGHTER_JET, start_pos)
+	# Swing in on a curve (not dead-on) so the contrail draws an arc across the sky
+	u["aim_offset"] = _heading_side() * (_rng.randf_range(90.0, 140.0) * (-1.0 if _rng.randf() < 0.5 else 1.0))
+	air_raid_incoming.emit(start_pos)
+	return u
 
 ## Unarmed/departing units (empty transports, retreating landing craft, jets climbing
 ## out) no longer count toward the wave. Any cargo they never delivered is dropped
@@ -432,10 +443,11 @@ func spawn_unit(u_type: int, pos: Vector3) -> Dictionary:
 			is_air = true
 		UnitType.FIGHTER_JET:
 			built = UnitFactoryScript.build_fighter_jet()
-			hp = 60.0 * _hp_mult
+			hp = 110.0 * _hp_mult
 			radius = 4.2
-			speed = 68.0 + aggression * 2.2
-			armor = "medium"
+			speed = 44.0 + aggression * 1.6
+			# Armored airframe: the 30mm barely scratches it; SAMs are the answer
+			armor = "air_armored"
 			points = 500
 			type_name = "STRIKE FIGHTER"
 			is_air = true
@@ -636,13 +648,19 @@ func _update_units(delta: float) -> void:
 					continue
 
 			UnitType.FIGHTER_JET:
+				# Long white contrail so incoming jets are easy to spot across the sky
+				u["trail_timer"] = u.get("trail_timer", 0.0) - delta
+				if u["trail_timer"] <= 0.0:
+					u["trail_timer"] = 0.08
+					_spawn_smoke_puff(node.position, 3.0, 5.0, 12.0)
 				if u["state"] == "approach":
-					var target_pt := Vector3(0.0, 26.0, 0.0)
+					var curve: float = clampf((horiz_dist - 200.0) / 320.0, 0.0, 1.0)
+					var target_pt: Vector3 = Vector3(0.0, 26.0, 0.0) + u.get("aim_offset", Vector3.ZERO) * curve
 					var jet_dir: Vector3 = (target_pt - pos).normalized()
 					pos += jet_dir * u["speed"] * delta
 					node.position = pos
 					node.look_at(pos + jet_dir, Vector3.UP, true)
-					if horiz_dist < 155.0 and not u["unloaded"]:
+					if horiz_dist < JET_ATTACK_DIST and not u["unloaded"]:
 						u["unloaded"] = true
 						_spawn_enemy_projectile(pos + Vector3(-2.5, -0.5, 0.0), BUNKER_TARGET_POS, 92.0, 12.0)
 						_spawn_enemy_projectile(pos + Vector3(2.5, -0.5, 0.0), BUNKER_TARGET_POS, 92.0, 12.0)
@@ -992,6 +1010,11 @@ func _check_player_projectile_hits(p: Dictionary, a: Vector3, b: Vector3) -> boo
 				if fx:
 					fx.spawn_ricochet_spark(b)
 				hull_deflected.emit(upos)
+			elif u["armor"] == "air_armored":
+				dmg *= 0.6 if kind == "ciws" else 0.25
+				if fx:
+					fx.spawn_ricochet_spark(b)
+				air_armor_deflected.emit(upos)
 			elif u["armor"] == "heavy" and kind != "ciws":
 				dmg = 1.5
 				if fx:
@@ -1073,7 +1096,7 @@ func _find_nearest_air_unit(from_pos: Vector3) -> Dictionary:
 				best = u
 	return best
 
-func _spawn_smoke_puff(pos: Vector3) -> void:
+func _spawn_smoke_puff(pos: Vector3, max_age: float = 0.55, start_scale: float = 0.7, end_scale: float = 2.6) -> void:
 	var mi := MeshInstance3D.new()
 	mi.mesh = _puff_mesh
 	mi.material_override = _mat_smoke
@@ -1082,7 +1105,9 @@ func _spawn_smoke_puff(pos: Vector3) -> void:
 	smoke_puffs.append({
 		"node": mi,
 		"age": 0.0,
-		"max_age": 0.55
+		"max_age": max_age,
+		"s0": start_scale,
+		"s1": end_scale
 	})
 
 func _update_smoke_puffs(delta: float) -> void:
@@ -1095,7 +1120,7 @@ func _update_smoke_puffs(delta: float) -> void:
 				sm["node"].queue_free()
 			smoke_puffs.remove_at(i)
 			continue
-		sm["node"].scale = Vector3.ONE * lerpf(0.7, 2.6, t)
+		sm["node"].scale = Vector3.ONE * lerpf(sm.get("s0", 0.7), sm.get("s1", 2.6), t)
 
 static func _segment_hits_sphere(a: Vector3, b: Vector3, center: Vector3, radius: float) -> bool:
 	var ab: Vector3 = b - a

@@ -164,6 +164,12 @@ func _draw() -> void:
 		var r: float = b["r"]
 		var pressed: bool = _flash.has(id) or _touches.values().has(id)
 		var col: Color = COL_FIRE if id == "fire" else COL_BTN
+		# SAM button pulses red once a missile has locked on
+		if id == "sam" and turret.lock_progress >= 1.0 and turret.sam_ammo > 0:
+			var pulse: float = 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.015)
+			col = Color(1.0, 0.25, 0.15)
+			draw_circle(pos, r + 6.0 + pulse * 6.0, Color(1.0, 0.2, 0.1, 0.25 + 0.25 * pulse))
+			pressed = true
 		draw_circle(pos, r, Color(col.r * 0.25, col.g * 0.25, col.b * 0.25, 0.55 if pressed else 0.32))
 		draw_arc(pos, r, 0.0, TAU, 40, Color(col.r, col.g, col.b, 0.95 if pressed else 0.6), 3.0)
 

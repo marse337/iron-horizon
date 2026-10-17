@@ -224,6 +224,8 @@ func _connect_signals() -> void:
 	combat.enemy_killed.connect(_on_enemy_killed)
 	combat.armor_ricochet.connect(_on_armor_ricochet)
 	combat.hull_deflected.connect(func(_p: Vector3) -> void: hud.trigger_hull_warning())
+	combat.air_armor_deflected.connect(func(_p: Vector3) -> void: hud.trigger_air_armor_hint())
+	combat.air_raid_incoming.connect(_on_air_raid_incoming)
 	combat.supply_claimed.connect(_on_supply_claimed)
 	combat.supply_lost.connect(_on_supply_lost)
 	combat.supply_plane_inbound.connect(_on_supply_plane_inbound)
@@ -231,6 +233,11 @@ func _connect_signals() -> void:
 	combat.bunker_damaged.connect(_on_bunker_damaged)
 	combat.wave_quota_updated.connect(_on_wave_quota_updated)
 	combat.wave_completed.connect(_on_wave_completed)
+
+func _on_air_raid_incoming(world_pos: Vector3) -> void:
+	sfx.play("air_raid", -2.0, 1.0)
+	var how: String = "TAP SAM" if touch.touch_mode else "RIGHT-CLICK / E FOR SAM"
+	hud.show_banner("AIRCRAFT INBOUND FROM %s!  %s" % [hud.bearing_name(world_pos), how], Color(1.0, 0.35, 0.25), 3.5)
 
 func _on_touch_mode_enabled() -> void:
 	hud.touch_mode = true
@@ -310,7 +317,7 @@ func _on_upgrade_purchased(upgrade_id: String, cost: int) -> void:
 		"ammo_pack":
 			turret.mg_ammo = mini(turret.max_mg_ammo + 400, turret.mg_ammo + 400)
 			turret.cannon_ammo = mini(turret.max_cannon_ammo + 25, turret.cannon_ammo + 25)
-			turret.sam_ammo = mini(turret.max_sam_ammo + 6, turret.sam_ammo + 6)
+			turret.sam_ammo = mini(turret.max_sam_ammo, turret.sam_ammo + 3)
 		"mg_rate":
 			turret.mg_fire_rate_mult += 0.20
 		"cannon_autoloader":

@@ -35,6 +35,7 @@ var _menu_state: String = "none"
 var _hitmarker_timer: float = 0.0
 var _ricochet_warn_timer: float = 0.0
 var _hull_warn_timer: float = 0.0
+var _air_hint_timer: float = 0.0
 var _coastal_gun_btn: Button
 # Exposed for the web test hook (tools/mobile-test)
 var start_button: Button
@@ -73,6 +74,26 @@ func trigger_ricochet_warning() -> void:
 
 func trigger_hull_warning() -> void:
 	_hull_warn_timer = 1.8
+
+func trigger_air_armor_hint() -> void:
+	_air_hint_timer = 1.8
+
+## 8-point compass name for a world position (N = out to sea, -Z)
+func bearing_name(world_pos: Vector3) -> String:
+	var ang: float = atan2(world_pos.x, -world_pos.z)
+	var names: Array[String] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+	return names[posmod(roundi(ang / (PI / 4.0)), 8)]
+
+## Jets still on their attack run, with seconds until they can fire
+func _inbound_jets() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for u in combat.units:
+		if u["type_name"] != "STRIKE FIGHTER" or u.get("escaped", false) or u["unloaded"] or not is_instance_valid(u["node"]):
+			continue
+		var p: Vector3 = u["node"].global_position
+		var eta: float = maxf(0.0, (Vector2(p.x, p.z).length() - combat.JET_ATTACK_DIST) / maxf(u["speed"], 1.0))
+		out.append({"pos": p, "eta": eta})
+	return out
 
 func trigger_damage_indicator(source_pos: Vector3) -> void:
 	_damage_flash = 0.65
@@ -125,6 +146,8 @@ func _process(delta: float) -> void:
 		_ricochet_warn_timer = maxf(0.0, _ricochet_warn_timer - delta)
 	if _hull_warn_timer > 0.0:
 		_hull_warn_timer = maxf(0.0, _hull_warn_timer - delta)
+	if _air_hint_timer > 0.0:
+		_air_hint_timer = maxf(0.0, _air_hint_timer - delta)
 	if _banner_timer > 0.0:
 		_banner_timer = maxf(0.0, _banner_timer - delta)
 	if _damage_flash > 0.0:
@@ -182,6 +205,12 @@ func _draw() -> void:
 		var h_col := Color(0.75, 0.82, 0.95, clampf(_hull_warn_timer, 0.0, 1.0))
 		draw_string(font, Vector2(center.x - 260.0, center.y + 104.0), "LANDING CRAFT HULL TOO THICK! BUY THE 155MM COASTAL GUN BETWEEN WAVES", HORIZONTAL_ALIGNMENT_CENTER, 520.0, 15, h_col)
 
+	if _air_hint_timer > 0.0:
+		var a_col := Color(1.0, 0.45, 0.3, clampf(_air_hint_timer, 0.0, 1.0))
+		var a_txt: String = "JET ARMOR SHRUGS OFF 30MM: TAP SAM!" if touch_mode else "JET ARMOR SHRUGS OFF 30MM: FIRE A SAM (RIGHT-CLICK / E)!"
+		draw_string_outline(font, Vector2(center.x - 260.0, center.y + 126.0), a_txt, HORIZONTAL_ALIGNMENT_CENTER, 520.0, 17, 4, Color(0, 0, 0, a_col.a * 0.8))
+		draw_string(font, Vector2(center.x - 260.0, center.y + 126.0), a_txt, HORIZONTAL_ALIGNMENT_CENTER, 520.0, 17, a_col)
+
 func _draw_3d_target_overlays(font: Font, vp: Vector2) -> void:
 	var cam: Camera3D = turret.camera
 
@@ -229,7 +258,7 @@ func _draw_3d_target_overlays(font: Font, vp: Vector2) -> void:
 			var half_sz: float = lerpf(54.0, 24.0, prog)
 			var col: Color = Color(1.0, 0.18, 0.15) if is_locked else Color(1.0, 0.78, 0.18)
 			draw_rect(Rect2(sp - Vector2(half_sz, half_sz), Vector2(half_sz * 2.0, half_sz * 2.0)), col, false, 2.5)
-			var status_txt: String = "SAM LOCKED [RMB / M]" if is_locked else ("LOCKING %d%%" % int(prog * 100.0))
+			var status_txt: String = ("SAM LOCKED: TAP SAM" if touch_mode else "SAM LOCKED [RMB / E]") if is_locked else ("LOCKING %d%%" % int(prog * 100.0))
 			draw_string(font, sp + Vector2(-80, half_sz + 18), status_txt, HORIZONTAL_ALIGNMENT_CENTER, 160.0, 13, col)
 
 	for ft in _floating_texts:
@@ -241,46 +270,60 @@ func _draw_3d_target_overlays(font: Font, vp: Vector2) -> void:
 			c.a = alpha
 			draw_string(font, sp - Vector2(90, 0), ft["text"], HORIZONTAL_ALIGNMENT_CENTER, 180.0, 15, c)
 
+# Crosshair lines are drawn twice: a dark outline underneath, then the bright
+# colour on top, so they stay readable against sand, sky and sea alike
+const XH_OUTLINE := Color(0.0, 0.0, 0.0, 0.78)
+
+func _xh_line(a: Vector2, b: Vector2, col: Color, w: float = 2.6) -> void:
+	draw_line(a, b, XH_OUTLINE, w + 3.0)
+	draw_line(a, b, col, w)
+
+func _xh_arc(c: Vector2, r: float, col: Color, w: float = 2.4) -> void:
+	draw_arc(c, r, 0.0, TAU, 40, XH_OUTLINE, w + 3.0)
+	draw_arc(c, r, 0.0, TAU, 40, col, w)
+
+func _xh_dot(c: Vector2, r: float, col: Color) -> void:
+	draw_circle(c, r + 1.8, XH_OUTLINE)
+	draw_circle(c, r, col)
+
 func _draw_crosshair(center: Vector2, font: Font) -> void:
-	var col_green := Color(0.45, 1.0, 0.38, 0.9)
-	var col_amber := Color(1.0, 0.82, 0.24, 0.95)
-	var col_cyan := Color(0.3, 0.95, 1.0, 0.95)
+	var col_green := Color(0.35, 1.0, 0.25, 1.0)
+	var col_amber := Color(1.0, 0.85, 0.15, 1.0)
+	var col_cyan := Color(0.25, 0.95, 1.0, 1.0)
 
 	if turret.overdrive_timer > 0.0:
-		draw_arc(center, 28.0, 0.0, TAU, 24, col_cyan, 2.2)
-		draw_circle(center, 3.5, col_cyan)
+		_xh_arc(center, 28.0, col_cyan)
+		_xh_dot(center, 3.5, col_cyan)
+		draw_string_outline(font, center + Vector2(-95, -36), "CIWS OVERDRIVE %.1fs" % turret.overdrive_timer, HORIZONTAL_ALIGNMENT_CENTER, 190.0, 14, 4, XH_OUTLINE)
 		draw_string(font, center + Vector2(-95, -36), "CIWS OVERDRIVE %.1fs" % turret.overdrive_timer, HORIZONTAL_ALIGNMENT_CENTER, 190.0, 14, col_cyan)
 	elif turret.current_weapon == 0:
-		draw_line(center + Vector2(-24, -14), center + Vector2(-10, -14), col_green, 2.0)
-		draw_line(center + Vector2(-24, -14), center + Vector2(-24, 14), col_green, 2.0)
-		draw_line(center + Vector2(-24, 14), center + Vector2(-10, 14), col_green, 2.0)
-
-		draw_line(center + Vector2(24, -14), center + Vector2(10, -14), col_green, 2.0)
-		draw_line(center + Vector2(24, -14), center + Vector2(24, 14), col_green, 2.0)
-		draw_line(center + Vector2(24, 14), center + Vector2(10, 14), col_green, 2.0)
-		draw_circle(center, 2.5, col_green)
+		for sx in [-1.0, 1.0]:
+			_xh_line(center + Vector2(24 * sx, -14), center + Vector2(10 * sx, -14), col_green)
+			_xh_line(center + Vector2(24 * sx, -14), center + Vector2(24 * sx, 14), col_green)
+			_xh_line(center + Vector2(24 * sx, 14), center + Vector2(10 * sx, 14), col_green)
+		_xh_dot(center, 2.8, col_green)
 	elif turret.current_weapon == 1:
-		draw_arc(center, 34.0, 0.0, TAU, 32, col_amber, 1.8)
-		draw_line(center + Vector2(-44, 0), center + Vector2(-12, 0), col_amber, 2.0)
-		draw_line(center + Vector2(12, 0), center + Vector2(44, 0), col_amber, 2.0)
-		draw_line(center + Vector2(0, 10), center + Vector2(0, 48), col_amber, 2.0)
+		_xh_arc(center, 34.0, col_amber, 2.2)
+		_xh_line(center + Vector2(-46, 0), center + Vector2(-12, 0), col_amber)
+		_xh_line(center + Vector2(12, 0), center + Vector2(46, 0), col_amber)
+		_xh_line(center + Vector2(0, 10), center + Vector2(0, 48), col_amber)
 		for tick in [18.0, 30.0, 42.0]:
-			draw_line(center + Vector2(-7, tick), center + Vector2(7, tick), col_amber, 1.5)
+			_xh_line(center + Vector2(-7, tick), center + Vector2(7, tick), col_amber, 2.0)
 		var reload_ratio: float = turret.get_cannon_reload_ratio()
 		var bar_w: float = 68.0
-		draw_rect(Rect2(center.x - bar_w * 0.5, center.y + 54.0, bar_w, 6.0), Color(0.1, 0.1, 0.1, 0.8), true)
-		var fill_col: Color = col_amber if reload_ratio >= 1.0 else Color(0.95, 0.35, 0.15)
+		draw_rect(Rect2(center.x - bar_w * 0.5 - 2.0, center.y + 52.0, bar_w + 4.0, 10.0), XH_OUTLINE, true)
+		var fill_col: Color = col_amber if reload_ratio >= 1.0 else Color(1.0, 0.35, 0.15)
 		draw_rect(Rect2(center.x - bar_w * 0.5, center.y + 54.0, bar_w * reload_ratio, 6.0), fill_col, true)
 	else:
-		draw_arc(center, 14.0, 0.0, TAU, 20, col_amber, 1.5)
-		draw_circle(center, 2.0, col_amber)
+		_xh_arc(center, 14.0, col_amber, 2.0)
+		_xh_dot(center, 2.2, col_amber)
 
 	if _hitmarker_timer > 0.0:
 		var hm_col := Color(1.0, 0.95, 0.4, 1.0)
-		draw_line(center + Vector2(-11, -11), center + Vector2(-4, -4), hm_col, 2.4)
-		draw_line(center + Vector2(11, -11), center + Vector2(4, -4), hm_col, 2.4)
-		draw_line(center + Vector2(-11, 11), center + Vector2(-4, 4), hm_col, 2.4)
-		draw_line(center + Vector2(11, 11), center + Vector2(4, 4), hm_col, 2.4)
+		_xh_line(center + Vector2(-11, -11), center + Vector2(-4, -4), hm_col)
+		_xh_line(center + Vector2(11, -11), center + Vector2(4, -4), hm_col)
+		_xh_line(center + Vector2(-11, 11), center + Vector2(-4, 4), hm_col)
+		_xh_line(center + Vector2(11, 11), center + Vector2(4, 4), hm_col)
 
 func _draw_top_compass_and_wave(vp: Vector2, font: Font) -> void:
 	var comp_w: float = 520.0
@@ -315,7 +358,13 @@ func _draw_top_compass_and_wave(vp: Vector2, font: Font) -> void:
 		var clamped_ratio: float = clampf(rel_ang / (PI * 0.55), -0.96, 0.96)
 		var tx: float = comp_x + (clamped_ratio * 0.5 + 0.5) * comp_w
 		var blip_col: Color = Color(1.0, 0.85, 0.2) if u["is_air"] else (Color(1.0, 0.22, 0.18) if u["armor"] == "heavy" else Color(1.0, 0.55, 0.15))
-		draw_circle(Vector2(tx, 47.0), 4.0, blip_col)
+		if u["type_name"] == "STRIKE FIGHTER" and not u.get("escaped", false):
+			# Inbound jet: big flashing red compass marker
+			var flash: float = 0.55 + 0.45 * sin(Time.get_ticks_msec() * 0.012)
+			draw_circle(Vector2(tx, 47.0), 7.0, Color(0, 0, 0, 0.7))
+			draw_circle(Vector2(tx, 47.0), 5.5, Color(1.0, 0.15, 0.1, flash))
+		else:
+			draw_circle(Vector2(tx, 47.0), 4.0, blip_col)
 
 	if touch_mode:
 		# Compact profile: two big lines instead of three small ones
@@ -425,8 +474,42 @@ func _draw_radar_scope(vp: Vector2, font: Font) -> void:
 		draw_circle(b_pos, 4.5, Color(0.25, 1.0, 0.95))
 
 	draw_circle(r_center, 3.5, Color(0.65, 1.0, 0.65))
+	_draw_air_raid_warning(r_center, r_radius, font)
 	if not touch_mode:
 		draw_string(font, r_center + Vector2(-75.0, -r_radius - 10.0), "360° TACTICAL RADAR", HORIZONTAL_ALIGNMENT_CENTER, 150.0, 12, Color(0.65, 0.95, 0.58))
+
+## Early warning for jets: they're picked up far beyond normal radar range, so
+## show each one as a flashing red arrowhead on the radar rim at its true bearing,
+## flash the rim, and print the direction + seconds until it can attack.
+func _draw_air_raid_warning(r_center: Vector2, r_radius: float, font: Font) -> void:
+	var jets: Array[Dictionary] = _inbound_jets()
+	if jets.is_empty():
+		return
+	var flash: float = 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.012)
+	var red := Color(1.0, 0.15, 0.1)
+	draw_arc(r_center, r_radius + 3.0, 0.0, TAU, 48, Color(red.r, red.g, red.b, 0.35 + 0.55 * flash), 3.0)
+	var soonest: Dictionary = jets[0]
+	for j in jets:
+		if j["eta"] < soonest["eta"]:
+			soonest = j
+		var p: Vector3 = j["pos"]
+		var rel: float = wrapf(atan2(p.x, -p.z) + turret.yaw, -PI, PI)
+		var dir := Vector2(sin(rel), -cos(rel))
+		var side := Vector2(-dir.y, dir.x)
+		var tip: Vector2 = r_center + dir * (r_radius - 4.0)
+		var base: Vector2 = r_center + dir * (r_radius - 18.0)
+		var tri := PackedVector2Array([tip, base + side * 8.0, base - side * 8.0])
+		draw_colored_polygon(tri, Color(red.r, red.g, red.b, 0.45 + 0.55 * flash))
+		draw_polyline(PackedVector2Array([tip, base + side * 8.0, base - side * 8.0, tip]), Color(0, 0, 0, 0.8), 1.5)
+
+	var eta: float = soonest["eta"]
+	var txt: String = "AIR RAID  %s  %s" % [bearing_name(soonest["pos"]), ("%ds" % ceili(eta)) if eta > 0.0 else "NOW!"]
+	var fs: int = 20 if touch_mode else 16
+	# Below the radar on touch layouts (radar top-left), above it on PC (radar bottom-right)
+	var y: float = r_center.y + r_radius + 26.0 if touch_mode else r_center.y - r_radius - 30.0
+	var x: float = r_center.x - 110.0
+	draw_string_outline(font, Vector2(x, y), txt, HORIZONTAL_ALIGNMENT_CENTER, 220.0, fs, 5, Color(0, 0, 0, 0.85))
+	draw_string(font, Vector2(x, y), txt, HORIZONTAL_ALIGNMENT_CENTER, 220.0, fs, Color(1.0, 0.3 + 0.3 * flash, 0.2))
 
 ## Phones and tablets get a compact menu profile: fewer words, much larger text
 ## and thumb-sized buttons. PC keeps the full briefing.
@@ -450,7 +533,7 @@ func _build_menus() -> void:
 func _upgrade_defs() -> Array[Dictionary]:
 	return [
 		{"id": "repair", "cost": 800, "title": "REPAIR BUNKER ARMOR (+35% Hull Integrity) — 800 PTS", "short": "REPAIR ARMOR\n800 PTS"},
-		{"id": "ammo_pack", "cost": 600, "title": "EMERGENCY ORDNANCE CRATE (+400 30mm, +25 Shells, +6 SAMs) — 600 PTS", "short": "AMMO CRATE\n600 PTS"},
+		{"id": "ammo_pack", "cost": 600, "title": "EMERGENCY ORDNANCE CRATE (+400 30mm, +25 Shells, +3 SAMs) — 600 PTS", "short": "AMMO CRATE\n600 PTS"},
 		{"id": "mg_rate", "cost": 1200, "title": "HIGH-SPEED 30MM ROTARY FEED (+20% MG Fire Rate) — 1200 PTS", "short": "FASTER MG\n1200 PTS"},
 		{"id": "coastal_gun", "cost": 8000, "title": "155MM COASTAL GUN (Replaces 105mm — Pierces Landing Craft Hulls) — 8000 PTS", "short": "155MM GUN · SINKS BOATS\n8000 PTS"},
 		{"id": "cannon_autoloader", "cost": 1400, "title": "105MM HYDRAULIC AUTOLOADER (+22% Faster Cannon Reload) — 1400 PTS", "short": "FASTER RELOAD\n1400 PTS"},
