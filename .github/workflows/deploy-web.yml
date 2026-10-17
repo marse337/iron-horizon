@@ -59,7 +59,7 @@ jobs:
       - name: Export Web build
         run: |
           mkdir -p build/web
-          ~/godot/godot --headless --path . --export-release "Web" build/web/index.html
+          ~/godot/godot --headless --verbose --path . --export-release "Web" build/web/index.html
           test -f build/web/index.html
           touch build/web/.nojekyll
 
