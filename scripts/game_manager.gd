@@ -49,10 +49,16 @@ var _sam_queued: bool = false
 var _flare_queued: bool = false
 # Real (non-touch-emulated) left mouse button, so touching the screen never fires
 var _mouse_fire_held: bool = false
+# Web test hook (open the page with ?test=1): publishes game state to window.__ih
+# for the automated device tests in tools/mobile-test. Off for normal players.
+var _test_hooks: bool = false
+var _test_hook_timer: float = 0.0
 var _wave_time: float = 0.0
 
 func _ready() -> void:
 	_load_high_score()
+	if OS.has_feature("web"):
+		_test_hooks = str(JavaScriptBridge.eval("location.search", true)).contains("test=1")
 	_setup_environment()
 
 	var env_refs: Dictionary = UnitFactoryScript.build_battlefield(self)
@@ -442,6 +448,11 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	_wave_time += delta
+	if _test_hooks:
+		_test_hook_timer -= delta
+		if _test_hook_timer <= 0.0:
+			_test_hook_timer = 0.05
+			_publish_test_state()
 	if is_instance_valid(shoreline_foam):
 		shoreline_foam.position.z = -82.0 + sin(_wave_time * 1.6) * 2.2
 
@@ -469,3 +480,30 @@ func _save_high_score() -> void:
 	cfg.set_value("stats", "high_score", high_score)
 	cfg.save(SAVE_PATH)
 
+
+## Positions are in canvas pixels (divide by devicePixelRatio for CSS pixels)
+func _publish_test_state() -> void:
+	var xf: Transform2D = get_tree().root.get_final_transform()
+	var buttons: Dictionary = {}
+	for b in touch._buttons():
+		var p: Vector2 = xf * b["pos"]
+		buttons[b["id"]] = [p.x, p.y, b["r"] * xf.x.x]
+	var rects: Dictionary = {}
+	for pair in [["start", hud.start_button], ["resume", hud.resume_button]]:
+		var btn: Control = pair[1]
+		if is_instance_valid(btn) and btn.is_visible_in_tree():
+			var r: Rect2 = btn.get_global_rect()
+			var c: Vector2 = xf * r.get_center()
+			rects[pair[0]] = [c.x, c.y]
+	var data: Dictionary = {
+		"state": GameState.keys()[state],
+		"yaw": turret.yaw, "pitch": turret.pitch,
+		"sens": turret.mouse_sensitivity, "canvas_per_logical": xf.x.x,
+		"mg": turret.mg_ammo, "cannon": turret.cannon_ammo, "sam": turret.sam_ammo, "flare": turret.flare_ammo,
+		"weapon": turret.current_weapon,
+		"touch_mode": touch.touch_mode, "fire_held": touch.fire_held, "mouse_fire_held": _mouse_fire_held,
+		"portrait": touch.is_portrait(),
+		"buttons": buttons, "menu_buttons": rects,
+		"frame": Engine.get_process_frames(),
+	}
+	JavaScriptBridge.eval("window.__ih = " + JSON.stringify(data) + ";", true)

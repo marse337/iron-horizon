@@ -35,6 +35,9 @@ var _hitmarker_timer: float = 0.0
 var _ricochet_warn_timer: float = 0.0
 var _hull_warn_timer: float = 0.0
 var _coastal_gun_btn: Button
+# Exposed for the web test hook (tools/mobile-test)
+var start_button: Button
+var resume_button: Button
 var _banner_text: String = ""
 var _banner_color: Color = Color(1.0, 0.88, 0.25)
 var _banner_timer: float = 0.0
@@ -408,6 +411,7 @@ func _build_menus() -> void:
 	var start_btn := _make_button("CLICK TO MAN THE BUNKER (START WAVE 1)")
 	start_btn.pressed.connect(func() -> void: start_mission_requested.emit())
 	tv.add_child(start_btn)
+	start_button = start_btn
 
 	shop_panel = _make_modal_panel(Vector2(660, 480))
 	var sv := VBoxContainer.new()
@@ -454,6 +458,7 @@ func _build_menus() -> void:
 	var resume_btn := _make_button("RESUME COMBAT (LOCK MOUSE)")
 	resume_btn.pressed.connect(func() -> void: resume_requested.emit())
 	pv.add_child(resume_btn)
+	resume_button = resume_btn
 
 	gameover_panel = _make_modal_panel(Vector2(540, 280))
 	var gv := VBoxContainer.new()
