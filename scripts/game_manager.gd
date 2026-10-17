@@ -59,6 +59,15 @@ func _ready() -> void:
 	_load_high_score()
 	if OS.has_feature("web"):
 		_test_hooks = str(JavaScriptBridge.eval("location.search", true)).contains("test=1")
+		# Let web/diag.js know the game actually started (its watchdog explains failures)
+		get_tree().process_frame.connect(func() -> void:
+			JavaScriptBridge.eval("window.__ihGameStarted && window.__ihGameStarted()", true),
+			CONNECT_ONE_SHOT)
+	if OS.has_feature("web_ios") or OS.has_feature("web_android"):
+		# Phones run this at 2-3x pixel density; drop MSAA and halve the shadow map
+		# to ease GPU memory pressure (iOS Safari is strict about it)
+		get_viewport().msaa_3d = Viewport.MSAA_DISABLED
+		RenderingServer.directional_shadow_atlas_set_size(1024, true)
 	_setup_environment()
 
 	var env_refs: Dictionary = UnitFactoryScript.build_battlefield(self)

@@ -61,6 +61,8 @@ jobs:
           mkdir -p build/web
           ~/godot/godot --headless --verbose --path . --export-release "Web" build/web/index.html
           test -f build/web/index.html
+          # Start-up diagnostics loaded by the page head (see web/diag.js)
+          cp web/diag.js build/web/diag.js
           touch build/web/.nojekyll
 
       - name: Upload GitHub Pages artifact
