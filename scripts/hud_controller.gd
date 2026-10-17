@@ -28,7 +28,8 @@ var time_of_day_name: String = "0600 HRS - DAWN ASSAULT"
 var wave_killed: int = 0
 var wave_total: int = 20
 # Set when a touchscreen is detected: radar moves top-right to make room for touch buttons
-var touch_mode: bool = false
+var touch_mode: bool = false: set = _set_touch_mode
+var _menu_state: String = "none"
 
 # Transient HUD feedback timers
 var _hitmarker_timer: float = 0.0
@@ -89,21 +90,32 @@ func add_floating_popup(world_pos: Vector3, text: String, color: Color = Color(1
 	})
 
 func set_menu_state(state: String) -> void:
+	_menu_state = state
 	title_panel.visible = (state == "title")
 	shop_panel.visible = (state == "shop")
 	pause_panel.visible = (state == "pause")
 	gameover_panel.visible = (state == "gameover")
 	if state == "shop" and is_instance_valid(_coastal_gun_btn) and turret != null:
 		_coastal_gun_btn.disabled = turret.heavy_gun
-		_coastal_gun_btn.text = "155MM COASTAL GUN — INSTALLED" if turret.heavy_gun else "155MM COASTAL GUN (Replaces 105mm — Pierces Landing Craft Hulls) — 8000 PTS"
+		var coastal: Dictionary = _upgrade_defs().filter(func(u: Dictionary) -> bool: return u["id"] == "coastal_gun")[0]
+		if turret.heavy_gun:
+			_coastal_gun_btn.text = "155MM GUN\nINSTALLED" if touch_mode else "155MM COASTAL GUN — INSTALLED"
+		else:
+			_coastal_gun_btn.text = coastal["short"] if touch_mode else coastal["title"]
 	if state == "shop" and is_instance_valid(shop_score_label):
-		shop_score_label.text = "WAVE %d CLEARED!   |   AVAILABLE COMMAND POINTS (SCORE): %d   |   BUNKER INTEGRITY: %d%%" % [
-			current_wave, score, int(round(bunker_hp))
-		]
+		if touch_mode:
+			shop_score_label.text = "SCORE %d   ·   ARMOR %d%%" % [score, int(round(bunker_hp))]
+		else:
+			shop_score_label.text = "WAVE %d CLEARED!   |   AVAILABLE COMMAND POINTS (SCORE): %d   |   BUNKER INTEGRITY: %d%%" % [
+				current_wave, score, int(round(bunker_hp))
+			]
 	elif state == "gameover" and is_instance_valid(gameover_stats_label):
-		gameover_stats_label.text = "BUNKER OVERRUN ON WAVE %d\nFINAL SCORE: %d   |   HIGH SCORE: %d" % [
-			current_wave, score, high_score
-		]
+		if touch_mode:
+			gameover_stats_label.text = "Wave %d\nScore %d   ·   Best %d" % [current_wave, score, high_score]
+		else:
+			gameover_stats_label.text = "BUNKER OVERRUN ON WAVE %d\nFINAL SCORE: %d   |   HIGH SCORE: %d" % [
+				current_wave, score, high_score
+			]
 
 func _process(delta: float) -> void:
 	_radar_sweep_angle = wrapf(_radar_sweep_angle + delta * 2.8, 0.0, TAU)
@@ -305,6 +317,16 @@ func _draw_top_compass_and_wave(vp: Vector2, font: Font) -> void:
 		var blip_col: Color = Color(1.0, 0.85, 0.2) if u["is_air"] else (Color(1.0, 0.22, 0.18) if u["armor"] == "heavy" else Color(1.0, 0.55, 0.15))
 		draw_circle(Vector2(tx, 47.0), 4.0, blip_col)
 
+	if touch_mode:
+		# Compact profile: two big lines instead of three small ones
+		var tc_rect := Rect2(16.0, 12.0, 300.0, 84.0)
+		draw_rect(tc_rect, Color(0.05, 0.09, 0.06, 0.82), true)
+		draw_rect(tc_rect, Color(0.35, 0.65, 0.28, 0.85), false, 1.8)
+		draw_string(font, Vector2(28.0, 42.0), "WAVE %d" % current_wave, HORIZONTAL_ALIGNMENT_LEFT, 120.0, 24, Color(0.85, 1.0, 0.72))
+		draw_string(font, Vector2(140.0, 42.0), "%d / %d" % [wave_killed, wave_total], HORIZONTAL_ALIGNMENT_RIGHT, 166.0, 22, Color(0.68, 0.92, 0.62))
+		draw_string(font, Vector2(28.0, 80.0), "SCORE %d  x%d" % [score, multiplier], HORIZONTAL_ALIGNMENT_LEFT, 280.0, 24, Color(1.0, 0.90, 0.32))
+		return
+
 	var tl_rect := Rect2(16.0, 12.0, 310.0, 72.0)
 	draw_rect(tl_rect, Color(0.05, 0.09, 0.06, 0.82), true)
 	draw_rect(tl_rect, Color(0.35, 0.65, 0.28, 0.85), false, 1.8)
@@ -313,6 +335,9 @@ func _draw_top_compass_and_wave(vp: Vector2, font: Font) -> void:
 	draw_string(font, Vector2(28.0, 74.0), "HOSTILES NEUTRALIZED: %d / %d" % [wave_killed, wave_total], HORIZONTAL_ALIGNMENT_LEFT, 290.0, 13, Color(0.68, 0.92, 0.62))
 
 func _draw_bottom_left_status(vp: Vector2, font: Font) -> void:
+	if touch_mode:
+		_draw_bottom_left_status_compact(vp, font)
+		return
 	var panel_rect := Rect2(16.0, vp.y - 162.0, 375.0, 146.0)
 	draw_rect(panel_rect, Color(0.05, 0.09, 0.06, 0.84), true)
 	draw_rect(panel_rect, Color(0.35, 0.65, 0.28, 0.85), false, 1.8)
@@ -334,6 +359,23 @@ func _draw_bottom_left_status(vp: Vector2, font: Font) -> void:
 	draw_string(font, Vector2(28.0, vp.y - 66.0), "[RMB / M] HOMING SAMs: %02d   |   [F] NIGHT FLARES: %02d" % [turret.sam_ammo, turret.flare_ammo], HORIZONTAL_ALIGNMENT_LEFT, 355.0, 14, sam_col)
 	draw_string(font, Vector2(28.0, vp.y - 44.0), "TOUCH: DRAG TO AIM  |  HOLD FIRE  |  SWAP / SAM / FLARE" if touch_mode else "[3] 9MM BACKUP: INF   |   [ESC] PAUSE / SENSITIVITY", HORIZONTAL_ALIGNMENT_LEFT, 355.0, 12, Color(0.58, 0.78, 0.55))
 	draw_string(font, Vector2(28.0, vp.y - 24.0), "TIP: SHOOT PARACHUTE SUPPLY CRATES IN MID-AIR!", HORIZONTAL_ALIGNMENT_LEFT, 355.0, 12, Color(0.95, 0.85, 0.32))
+
+## Phones/tablets: just armor, active weapon and main ammo, in large type
+## (SAM and flare counts are already shown on their touch buttons)
+func _draw_bottom_left_status_compact(vp: Vector2, font: Font) -> void:
+	var panel_rect := Rect2(16.0, vp.y - 124.0, 380.0, 108.0)
+	draw_rect(panel_rect, Color(0.05, 0.09, 0.06, 0.84), true)
+	draw_rect(panel_rect, Color(0.35, 0.65, 0.28, 0.85), false, 1.8)
+
+	var hp_ratio: float = clampf(bunker_hp / maxf(bunker_max_hp, 1.0), 0.0, 1.0)
+	var hp_col: Color = Color(0.32, 0.95, 0.38) if hp_ratio > 0.5 else (Color(1.0, 0.75, 0.18) if hp_ratio > 0.25 else Color(1.0, 0.2, 0.15))
+	draw_string(font, Vector2(28.0, vp.y - 94.0), "ARMOR %d%%" % int(round(bunker_hp)), HORIZONTAL_ALIGNMENT_LEFT, 170.0, 22, hp_col)
+	draw_rect(Rect2(204.0, vp.y - 110.0, 178.0, 18.0), Color(0.12, 0.16, 0.12), true)
+	draw_rect(Rect2(204.0, vp.y - 110.0, 178.0 * hp_ratio, 18.0), hp_col, true)
+
+	draw_string(font, Vector2(28.0, vp.y - 62.0), turret.get_current_weapon_name(), HORIZONTAL_ALIGNMENT_LEFT, 356.0, 21, Color(1.0, 0.92, 0.35))
+	var low: bool = (turret.mg_ammo <= 120) if turret.current_weapon == 0 else (turret.cannon_ammo <= 10)
+	draw_string(font, Vector2(28.0, vp.y - 30.0), "MG %d   ·   SHELLS %d" % [turret.mg_ammo, turret.cannon_ammo], HORIZONTAL_ALIGNMENT_LEFT, 310.0, 21, Color(1.0, 0.35, 0.25) if low else Color(0.75, 1.0, 0.68))
 
 func _draw_radar_scope(vp: Vector2, font: Font) -> void:
 	var r_radius: float = 82.0
@@ -383,9 +425,39 @@ func _draw_radar_scope(vp: Vector2, font: Font) -> void:
 		draw_circle(b_pos, 4.5, Color(0.25, 1.0, 0.95))
 
 	draw_circle(r_center, 3.5, Color(0.65, 1.0, 0.65))
-	draw_string(font, r_center + Vector2(-75.0, -r_radius - 10.0), "360° TACTICAL RADAR", HORIZONTAL_ALIGNMENT_CENTER, 150.0, 12, Color(0.65, 0.95, 0.58))
+	if not touch_mode:
+		draw_string(font, r_center + Vector2(-75.0, -r_radius - 10.0), "360° TACTICAL RADAR", HORIZONTAL_ALIGNMENT_CENTER, 150.0, 12, Color(0.65, 0.95, 0.58))
+
+## Phones and tablets get a compact menu profile: fewer words, much larger text
+## and thumb-sized buttons. PC keeps the full briefing.
+func _set_touch_mode(on: bool) -> void:
+	if on == touch_mode:
+		return
+	touch_mode = on
+	if is_inside_tree() and is_instance_valid(title_panel):
+		for p in [title_panel, shop_panel, pause_panel, gameover_panel]:
+			p.hide()
+			p.queue_free()
+		_build_menus()
+		set_menu_state(_menu_state)
 
 func _build_menus() -> void:
+	if touch_mode:
+		_build_menus_compact()
+	else:
+		_build_menus_full()
+
+func _upgrade_defs() -> Array[Dictionary]:
+	return [
+		{"id": "repair", "cost": 800, "title": "REPAIR BUNKER ARMOR (+35% Hull Integrity) — 800 PTS", "short": "REPAIR ARMOR\n800 PTS"},
+		{"id": "ammo_pack", "cost": 600, "title": "EMERGENCY ORDNANCE CRATE (+400 30mm, +25 Shells, +6 SAMs) — 600 PTS", "short": "AMMO CRATE\n600 PTS"},
+		{"id": "mg_rate", "cost": 1200, "title": "HIGH-SPEED 30MM ROTARY FEED (+20% MG Fire Rate) — 1200 PTS", "short": "FASTER MG\n1200 PTS"},
+		{"id": "coastal_gun", "cost": 8000, "title": "155MM COASTAL GUN (Replaces 105mm — Pierces Landing Craft Hulls) — 8000 PTS", "short": "155MM GUN · SINKS BOATS\n8000 PTS"},
+		{"id": "cannon_autoloader", "cost": 1400, "title": "105MM HYDRAULIC AUTOLOADER (+22% Faster Cannon Reload) — 1400 PTS", "short": "FASTER RELOAD\n1400 PTS"},
+		{"id": "sam_radar", "cost": 1100, "title": "DOPPLER SAM SEEKER UPGRADE (+30% Faster Missile Lock) — 1100 PTS", "short": "FASTER SAM LOCK\n1100 PTS"},
+	]
+
+func _build_menus_full() -> void:
 	title_panel = _make_modal_panel(Vector2(680, 460))
 	var tv := VBoxContainer.new()
 	tv.add_theme_constant_override("separation", 12)
@@ -420,15 +492,7 @@ func _build_menus() -> void:
 	_add_label(sv, "SECTOR SECURED — TACTICAL RESUPPLY & BUNKER UPGRADES", 22, Color(0.85, 1.0, 0.55))
 	shop_score_label = _add_label(sv, "SCORE: 0", 15, Color(1.0, 0.9, 0.35))
 
-	var upgrades: Array[Dictionary] = [
-		{"id": "repair", "cost": 800, "title": "REPAIR BUNKER ARMOR (+35% Hull Integrity) — 800 PTS"},
-		{"id": "ammo_pack", "cost": 600, "title": "EMERGENCY ORDNANCE CRATE (+400 30mm, +25 Shells, +6 SAMs) — 600 PTS"},
-		{"id": "mg_rate", "cost": 1200, "title": "HIGH-SPEED 30MM ROTARY FEED (+20% MG Fire Rate) — 1200 PTS"},
-		{"id": "coastal_gun", "cost": 8000, "title": "155MM COASTAL GUN (Replaces 105mm — Pierces Landing Craft Hulls) — 8000 PTS"},
-		{"id": "cannon_autoloader", "cost": 1400, "title": "105MM HYDRAULIC AUTOLOADER (+22% Faster Cannon Reload) — 1400 PTS"},
-		{"id": "sam_radar", "cost": 1100, "title": "DOPPLER SAM SEEKER UPGRADE (+30% Faster Missile Lock) — 1100 PTS"}
-	]
-	for upg in upgrades:
+	for upg in _upgrade_defs():
 		var u_id: String = upg["id"]
 		var u_cost: int = upg["cost"]
 		var btn := _make_button(upg["title"])
@@ -470,6 +534,80 @@ func _build_menus() -> void:
 	retry_btn.pressed.connect(func() -> void: start_mission_requested.emit())
 	gv.add_child(retry_btn)
 
+func _build_menus_compact() -> void:
+	var col_title := Color(0.85, 1.0, 0.55)
+	var col_text := Color(0.88, 0.95, 0.84)
+
+	title_panel = _make_modal_panel(Vector2(760, 0))
+	var tv := VBoxContainer.new()
+	tv.add_theme_constant_override("separation", 14)
+	title_panel.add_child(tv)
+	_add_label(tv, "IRON HORIZON", 44, col_title)
+	_add_label(tv, "Hold the hilltop. Stop the beach landing.", 22, Color(0.95, 0.85, 0.35))
+	_add_label(tv,
+		"DRAG — aim\n" +
+		"FIRE — hold to shoot\n" +
+		"SWAP — machine gun / cannon\n" +
+		"SAM — missile for aircraft\n" +
+		"FLARE — light up night waves",
+		26, col_text)
+	_add_label(tv, "Tanks shrug off the machine gun: use the cannon.", 20, Color(1.0, 0.75, 0.4))
+	start_button = _make_button("START", 32, 80)
+	start_button.pressed.connect(func() -> void: start_mission_requested.emit())
+	tv.add_child(start_button)
+
+	shop_panel = _make_modal_panel(Vector2(820, 0))
+	var sv := VBoxContainer.new()
+	sv.add_theme_constant_override("separation", 12)
+	shop_panel.add_child(sv)
+	_add_label(sv, "WAVE CLEARED", 36, col_title)
+	shop_score_label = _add_label(sv, "", 24, Color(1.0, 0.9, 0.35))
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 12)
+	sv.add_child(grid)
+	for upg in _upgrade_defs():
+		var u_id: String = upg["id"]
+		var u_cost: int = upg["cost"]
+		var btn := _make_button(upg["short"], 22, 78)
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.pressed.connect(func() -> void: upgrade_purchased.emit(u_id, u_cost))
+		if u_id == "coastal_gun":
+			_coastal_gun_btn = btn
+		grid.add_child(btn)
+	var next_btn := _make_button("NEXT WAVE  >>", 30, 76)
+	next_btn.pressed.connect(func() -> void: next_wave_requested.emit())
+	sv.add_child(next_btn)
+
+	pause_panel = _make_modal_panel(Vector2(600, 0))
+	var pv := VBoxContainer.new()
+	pv.add_theme_constant_override("separation", 18)
+	pause_panel.add_child(pv)
+	_add_label(pv, "PAUSED", 40, col_title)
+	_add_label(pv, "AIM SPEED", 24, col_text)
+	var sens_slider := HSlider.new()
+	sens_slider.min_value = 0.0008
+	sens_slider.max_value = 0.0060
+	sens_slider.step = 0.0002
+	sens_slider.value = turret.mouse_sensitivity if turret != null else 0.0024
+	sens_slider.custom_minimum_size = Vector2(0, 48)
+	sens_slider.value_changed.connect(func(v: float) -> void: sensitivity_changed.emit(v))
+	pv.add_child(sens_slider)
+	resume_button = _make_button("RESUME", 32, 80)
+	resume_button.pressed.connect(func() -> void: resume_requested.emit())
+	pv.add_child(resume_button)
+
+	gameover_panel = _make_modal_panel(Vector2(640, 0))
+	var gv := VBoxContainer.new()
+	gv.add_theme_constant_override("separation", 18)
+	gameover_panel.add_child(gv)
+	_add_label(gv, "BUNKER DESTROYED", 40, Color(1.0, 0.32, 0.22))
+	gameover_stats_label = _add_label(gv, "", 26, Color(1.0, 0.9, 0.35))
+	var retry_btn := _make_button("PLAY AGAIN", 32, 80)
+	retry_btn.pressed.connect(func() -> void: start_mission_requested.emit())
+	gv.add_child(retry_btn)
+
 func _make_modal_panel(sz: Vector2) -> PanelContainer:
 	var pc := PanelContainer.new()
 	pc.custom_minimum_size = sz
@@ -496,10 +634,10 @@ func _add_label(parent: Node, txt: String, font_sz: int, col: Color, align: Hori
 	parent.add_child(lbl)
 	return lbl
 
-func _make_button(txt: String) -> Button:
+func _make_button(txt: String, font_sz: int = 15, height: float = 42.0) -> Button:
 	var btn := Button.new()
 	btn.text = txt
-	btn.custom_minimum_size = Vector2(0, 42)
+	btn.custom_minimum_size = Vector2(0, height)
 	var sb_norm := StyleBoxFlat.new()
 	sb_norm.bg_color = Color(0.16, 0.28, 0.14, 1.0)
 	sb_norm.border_color = Color(0.58, 0.88, 0.42, 1.0)
@@ -510,7 +648,7 @@ func _make_button(txt: String) -> Button:
 	btn.add_theme_stylebox_override("normal", sb_norm)
 	btn.add_theme_stylebox_override("hover", sb_hover)
 	btn.add_theme_stylebox_override("pressed", sb_hover)
-	btn.add_theme_font_size_override("font_size", 15)
+	btn.add_theme_font_size_override("font_size", font_sz)
 	btn.add_theme_color_override("font_color", Color(0.95, 1.0, 0.88))
 	return btn
 
