@@ -16,6 +16,9 @@ var touch_mode: bool = false
 var fire_held: bool = false
 var aim_sensitivity_mult: float = 1.0
 
+# A FIRE tap can go down and up within one frame; this latch guarantees the game
+# sees at least one firing frame per tap (matters most for the single-shot cannon)
+var _fire_tap: bool = false
 var _sam_queued: bool = false
 var _flare_queued: bool = false
 var _touches: Dictionary = {} # touch index -> button id, or "aim"
@@ -52,6 +55,11 @@ func set_active(on: bool) -> void:
 		_touches.clear()
 		_last_pos.clear()
 		fire_held = false
+
+func consume_fire_tap() -> bool:
+	var q: bool = _fire_tap
+	_fire_tap = false
+	return q
 
 func consume_sam() -> bool:
 	var q: bool = _sam_queued
@@ -100,6 +108,7 @@ func _input(event: InputEvent) -> void:
 			match id:
 				"fire":
 					fire_held = true
+					_fire_tap = true
 				"swap":
 					turret.toggle_primary_weapon()
 				"sam":

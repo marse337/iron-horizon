@@ -457,7 +457,8 @@ func _process(delta: float) -> void:
 		shoreline_foam.position.z = -82.0 + sin(_wave_time * 1.6) * 2.2
 
 	if state == GameState.PLAYING:
-		var firing_primary: bool = _mouse_fire_held or touch.fire_held \
+		var fire_tapped: bool = touch.consume_fire_tap()
+		var firing_primary: bool = _mouse_fire_held or touch.fire_held or fire_tapped \
 				or Input.is_physical_key_pressed(KEY_ENTER) or Input.is_physical_key_pressed(KEY_KP_ENTER)
 		_sam_queued = touch.consume_sam() or _sam_queued
 		_flare_queued = touch.consume_flare() or _flare_queued

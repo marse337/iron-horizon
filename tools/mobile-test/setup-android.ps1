@@ -1,6 +1,6 @@
 # Installs a self-contained Android SDK + emulator for testing the web build in
-# real Android Chrome. No admin rights needed for this part. Running the emulator
-# additionally requires the "Windows Hypervisor Platform" Windows feature.
+# real Android Chrome. No admin rights needed. Running the emulator requires
+# hardware acceleration ("emulator -accel-check" must report WHPX or AEHD usable).
 #
 #   SDK:  %LOCALAPPDATA%\Android\Sdk
 #   JDK:  %LOCALAPPDATA%\Android\jdk17   (only used by sdkmanager/avdmanager)
@@ -41,11 +41,26 @@ if (-not (Test-Path $SdkManager)) {
 }
 
 Write-Host "== Accepting SDK licenses"
-("y`n" * 30) | & $SdkManager --licenses | Out-Null
+# PowerShell pipes don't reach sdkmanager's prompt reliably; go through cmd
+cmd /c "for /l %i in (1,1,30) do @echo y" | & $SdkManager --licenses | Out-Null
+
+# The bootstrap download is an old cmdline-tools that doesn't know newer device
+# profiles (pixel_7, pixel_tablet); self-update, which lands in "latest-2"
+if ((Get-Content (Join-Path $Sdk "cmdline-tools\latest\source.properties") | Select-String "Pkg.Revision=(\d+)").Matches[0].Groups[1].Value -lt 20) {
+    Write-Host "== Updating cmdline-tools"
+    & $SdkManager --install "cmdline-tools;latest" | Out-Null
+    if (Test-Path "$Sdk\cmdline-tools\latest-2") {
+        Remove-Item "$Sdk\cmdline-tools\latest" -Recurse -Force
+        Move-Item "$Sdk\cmdline-tools\latest-2" "$Sdk\cmdline-tools\latest"
+    }
+}
 
 Write-Host "== Installing platform-tools, emulator, $Image (several GB)"
-& $SdkManager --install "platform-tools" "emulator" $Image
-if ($LASTEXITCODE -ne 0) { throw "sdkmanager failed ($LASTEXITCODE)" }
+# --install can re-prompt for package-specific licenses, so feed it "y" too
+cmd /c "for /l %i in (1,1,30) do @echo y" | & $SdkManager --install "platform-tools" "emulator" $Image
+if (-not (Test-Path (Join-Path $Sdk "system-images\android-34\google_apis_playstore\x86_64\system.img"))) {
+    throw "System image did not install (license not accepted or download failed)"
+}
 
 $AvdManager = Join-Path $Sdk "cmdline-tools\latest\bin\avdmanager.bat"
 foreach ($avd in @(@{ Name = "iron_phone"; Device = "pixel_7" }, @{ Name = "iron_tablet"; Device = "pixel_tablet" })) {
