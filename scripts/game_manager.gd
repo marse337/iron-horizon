@@ -402,6 +402,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	# and fired the gun whenever a finger was down)
 	if event is InputEventMouse and event.device == InputEvent.DEVICE_ID_EMULATION:
 		return
+	# Mobile browsers also send their own imitation mouse events right after a tap
+	# (not marked as emulated); they would grab pointer lock and jerk the aim
+	if event is InputEventMouse and touch.is_recent_touch():
+		return
 
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		_mouse_fire_held = event.pressed

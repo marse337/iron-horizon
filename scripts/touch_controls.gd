@@ -19,6 +19,16 @@ var aim_sensitivity_mult: float = 1.0
 var _sam_queued: bool = false
 var _flare_queued: bool = false
 var _touches: Dictionary = {} # touch index -> button id, or "aim"
+# Last known position per touch index. The web build computes ScreenDrag.relative
+# against the wrong finger's previous position when 2+ fingers are down (e.g. aiming
+# while holding FIRE), which made the view jump; we derive deltas ourselves instead.
+var _last_pos: Dictionary = {}
+## Time of the most recent touch event; mobile browsers send imitation mouse
+## events (move/down/up) just after a tap, which the game must ignore
+var last_touch_msec: int = -100000
+
+func is_recent_touch() -> bool:
+	return not _touches.is_empty() or Time.get_ticks_msec() - last_touch_msec < 800
 var _flash: Dictionary = {}   # button id -> remaining highlight time
 
 const COL_FIRE := Color(0.95, 0.25, 0.18)
@@ -40,6 +50,7 @@ func set_active(on: bool) -> void:
 	active = on
 	if not on:
 		_touches.clear()
+		_last_pos.clear()
 		fire_held = false
 
 func consume_sam() -> bool:
@@ -75,6 +86,8 @@ func _hit_button(p: Vector2) -> String:
 	return "aim"
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch or event is InputEventScreenDrag:
+		last_touch_msec = Time.get_ticks_msec()
 	if event is InputEventScreenTouch:
 		_enable_touch_mode()
 		if event.pressed:
@@ -82,6 +95,7 @@ func _input(event: InputEvent) -> void:
 				return
 			var id: String = _hit_button(event.position)
 			_touches[event.index] = id
+			_last_pos[event.index] = event.position
 			_flash[id] = 0.18
 			match id:
 				"fire":
@@ -98,11 +112,14 @@ func _input(event: InputEvent) -> void:
 		else:
 			var released: String = _touches.get(event.index, "")
 			_touches.erase(event.index)
+			_last_pos.erase(event.index)
 			if released == "fire":
 				fire_held = _touches.values().has("fire")
 	elif event is InputEventScreenDrag and active:
-		if _touches.get(event.index, "") == "aim":
-			turret.apply_mouse_delta(event.relative * aim_sensitivity_mult)
+		if _touches.get(event.index, "") == "aim" and _last_pos.has(event.index):
+			var delta: Vector2 = event.position - _last_pos[event.index]
+			turret.apply_mouse_delta(delta * aim_sensitivity_mult)
+		_last_pos[event.index] = event.position
 		get_viewport().set_input_as_handled()
 
 func _process(delta: float) -> void:
