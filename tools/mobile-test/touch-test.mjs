@@ -98,7 +98,11 @@ async function openTarget() {
       const page = ctx.pages().find((p) => p.url().includes("iron-horizon")) || ctx.pages()[0] || (await ctx.newPage());
       await page.bringToFront();
       const cdp = await ctx.newCDPSession(page);
-      await cdp.send("Network.setCacheDisabled", { cacheDisabled: true }); // always test the latest deploy
+      // Always test the latest deploy: Android Chrome otherwise reuses its cached
+      // index.pck (setCacheDisabled alone didn't stop that over remote debugging)
+      await cdp.send("Network.enable");
+      await cdp.send("Network.clearBrowserCache");
+      await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
       return { browser, ctx, page, touch: new CdpTouch(cdp), canRotate: false, adb };
     }
     default:
@@ -136,6 +140,13 @@ async function main() {
   const t0 = Date.now();
   let s = await waitFor((s) => s.state === "TITLE" && s.menu_buttons.start, 180000, "game to load");
   check("game loads and reaches title screen", true, `${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  // Guard against testing a stale cached build: the game data must match the server's
+  const pck = await page.evaluate(async () => {
+    const e = performance.getEntriesByType("resource").find((r) => /index\.pck/.test(r.name));
+    const fresh = await fetch("index.pck", { cache: "no-store" }).then((r) => r.arrayBuffer());
+    return { loaded: e ? e.decodedBodySize : -1, server: fresh.byteLength };
+  });
+  check("tested build is the latest deploy (not a cached copy)", pck.loaded === pck.server, `index.pck ${pck.loaded} B loaded, server has ${pck.server} B`);
   let g = await geom();
   await shot("title");
 
