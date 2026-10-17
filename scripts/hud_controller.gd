@@ -1,0 +1,499 @@
+class_name HudController
+extends Control
+
+## Draws the military arcade HUD:
+## - 360-degree Top Compass Tape & Bottom-Right Phosphor Radar Scope
+## - Dynamic Weapon Crosshairs (30mm Twin Autocannon, 105mm Ballistic Sight, CIWS, Sidearm)
+## - 3D-Projected SAM Lock-On Diamond & Parachute Supply Crate Target Brackets
+## - Floating Kill Score Popups, Hitmarkers, Directional Damage Arcs, and Menus
+
+signal start_mission_requested()
+signal next_wave_requested()
+signal upgrade_purchased(upgrade_id: String, cost: int)
+signal resume_requested()
+signal sensitivity_changed(new_sens: float)
+
+var turret: Node3D
+var combat: Node3D
+
+# Live HUD state
+var bunker_hp: float = 100.0
+var bunker_max_hp: float = 100.0
+var score: int = 0
+var high_score: int = 0
+var streak: int = 0
+var multiplier: int = 1
+var current_wave: int = 1
+var time_of_day_name: String = "0600 HRS - DAWN ASSAULT"
+var wave_killed: int = 0
+var wave_total: int = 20
+
+# Transient HUD feedback timers
+var _hitmarker_timer: float = 0.0
+var _ricochet_warn_timer: float = 0.0
+var _hull_warn_timer: float = 0.0
+var _coastal_gun_btn: Button
+var _banner_text: String = ""
+var _banner_color: Color = Color(1.0, 0.88, 0.25)
+var _banner_timer: float = 0.0
+var _damage_flash: float = 0.0
+var _damage_angle: float = 0.0
+var _radar_sweep_angle: float = 0.0
+var _floating_texts: Array[Dictionary] = []
+
+# Interactive Menu Panels
+var title_panel: PanelContainer
+var shop_panel: PanelContainer
+var pause_panel: PanelContainer
+var gameover_panel: PanelContainer
+var shop_score_label: Label
+var gameover_stats_label: Label
+
+func _ready() -> void:
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_build_menus()
+
+func show_banner(text: String, color: Color = Color(1.0, 0.88, 0.25), duration: float = 3.0) -> void:
+	_banner_text = text
+	_banner_color = color
+	_banner_timer = duration
+
+func trigger_hitmarker() -> void:
+	_hitmarker_timer = 0.14
+
+func trigger_ricochet_warning() -> void:
+	_ricochet_warn_timer = 1.4
+
+func trigger_hull_warning() -> void:
+	_hull_warn_timer = 1.8
+
+func trigger_damage_indicator(source_pos: Vector3) -> void:
+	_damage_flash = 0.65
+	if turret != null:
+		var world_angle: float = atan2(source_pos.x, -source_pos.z)
+		_damage_angle = wrapf(world_angle + turret.yaw, -PI, PI)
+
+func add_floating_popup(world_pos: Vector3, text: String, color: Color = Color(1.0, 0.92, 0.35)) -> void:
+	_floating_texts.append({
+		"world_pos": world_pos,
+		"text": text,
+		"color": color,
+		"age": 0.0,
+		"duration": 1.35
+	})
+
+func set_menu_state(state: String) -> void:
+	title_panel.visible = (state == "title")
+	shop_panel.visible = (state == "shop")
+	pause_panel.visible = (state == "pause")
+	gameover_panel.visible = (state == "gameover")
+	if state == "shop" and is_instance_valid(_coastal_gun_btn) and turret != null:
+		_coastal_gun_btn.disabled = turret.heavy_gun
+		_coastal_gun_btn.text = "155MM COASTAL GUN — INSTALLED" if turret.heavy_gun else "155MM COASTAL GUN (Replaces 105mm — Pierces Landing Craft Hulls) — 8000 PTS"
+	if state == "shop" and is_instance_valid(shop_score_label):
+		shop_score_label.text = "WAVE %d CLEARED!   |   AVAILABLE COMMAND POINTS (SCORE): %d   |   BUNKER INTEGRITY: %d%%" % [
+			current_wave, score, int(round(bunker_hp))
+		]
+	elif state == "gameover" and is_instance_valid(gameover_stats_label):
+		gameover_stats_label.text = "BUNKER OVERRUN ON WAVE %d\nFINAL SCORE: %d   |   HIGH SCORE: %d" % [
+			current_wave, score, high_score
+		]
+
+func _process(delta: float) -> void:
+	_radar_sweep_angle = wrapf(_radar_sweep_angle + delta * 2.8, 0.0, TAU)
+	if _hitmarker_timer > 0.0:
+		_hitmarker_timer = maxf(0.0, _hitmarker_timer - delta)
+	if _ricochet_warn_timer > 0.0:
+		_ricochet_warn_timer = maxf(0.0, _ricochet_warn_timer - delta)
+	if _hull_warn_timer > 0.0:
+		_hull_warn_timer = maxf(0.0, _hull_warn_timer - delta)
+	if _banner_timer > 0.0:
+		_banner_timer = maxf(0.0, _banner_timer - delta)
+	if _damage_flash > 0.0:
+		_damage_flash = maxf(0.0, _damage_flash - delta * 1.4)
+
+	for i in range(_floating_texts.size() - 1, -1, -1):
+		_floating_texts[i]["age"] += delta
+		_floating_texts[i]["world_pos"] += Vector3(0.0, 4.5 * delta, 0.0)
+		if _floating_texts[i]["age"] >= _floating_texts[i]["duration"]:
+			_floating_texts.remove_at(i)
+
+	queue_redraw()
+
+func _draw() -> void:
+	var vp: Vector2 = get_viewport_rect().size
+	var center: Vector2 = vp * 0.5
+	var font: Font = ThemeDB.fallback_font
+
+	if _damage_flash > 0.0:
+		var alpha: float = _damage_flash * 0.35
+		draw_rect(Rect2(0, 0, vp.x, 18), Color(0.95, 0.12, 0.08, alpha), true)
+		draw_rect(Rect2(0, vp.y - 18, vp.x, 18), Color(0.95, 0.12, 0.08, alpha), true)
+		draw_rect(Rect2(0, 0, 18, vp.y), Color(0.95, 0.12, 0.08, alpha), true)
+		draw_rect(Rect2(vp.x - 18, 0, 18, vp.y), Color(0.95, 0.12, 0.08, alpha), true)
+		var arc_dir := Vector2(sin(_damage_angle), -cos(_damage_angle))
+		var indicator_pos: Vector2 = center + arc_dir * 135.0
+		draw_circle(indicator_pos, 14.0, Color(1.0, 0.18, 0.12, _damage_flash))
+
+	if turret == null or combat == null or turret.camera == null:
+		return
+
+	_draw_3d_target_overlays(font, vp)
+	_draw_crosshair(center, font)
+	_draw_top_compass_and_wave(vp, font)
+	_draw_bottom_left_status(vp, font)
+	_draw_radar_scope(vp, font)
+
+	if _banner_timer > 0.0:
+		var pulse: float = 0.75 + 0.25 * sin(Time.get_ticks_msec() * 0.012)
+		var b_rect := Rect2(center.x - 310.0, 96.0, 620.0, 38.0)
+		draw_rect(b_rect, Color(0.06, 0.10, 0.06, 0.82), true)
+		draw_rect(b_rect, Color(_banner_color.r, _banner_color.g, _banner_color.b, pulse), false, 2.0)
+		draw_string(font, Vector2(center.x - 295.0, 121.0), _banner_text, HORIZONTAL_ALIGNMENT_CENTER, 590.0, 18, _banner_color)
+
+	if _ricochet_warn_timer > 0.0:
+		var r_col := Color(1.0, 0.42, 0.15, clampf(_ricochet_warn_timer, 0.0, 1.0))
+		draw_string(font, Vector2(center.x - 220.0, center.y + 82.0), "ARMOR DEFLECTED 30MM! PRESS [SPACE] FOR 105MM CANNON!", HORIZONTAL_ALIGNMENT_CENTER, 440.0, 15, r_col)
+
+	if _hull_warn_timer > 0.0:
+		var h_col := Color(0.75, 0.82, 0.95, clampf(_hull_warn_timer, 0.0, 1.0))
+		draw_string(font, Vector2(center.x - 260.0, center.y + 104.0), "LANDING CRAFT HULL TOO THICK! BUY THE 155MM COASTAL GUN BETWEEN WAVES", HORIZONTAL_ALIGNMENT_CENTER, 520.0, 15, h_col)
+
+func _draw_3d_target_overlays(font: Font, vp: Vector2) -> void:
+	var cam: Camera3D = turret.camera
+
+	# Landing craft hull bars: grey "armored" until the 155mm Coastal Gun can hurt them
+	for u in combat.units:
+		if u["type_name"] != "LANDING CRAFT" or not is_instance_valid(u["node"]):
+			continue
+		var bar_pos: Vector3 = u["node"].global_position + Vector3(0.0, 7.5, 0.0)
+		if cam.is_position_behind(bar_pos):
+			continue
+		var sp: Vector2 = cam.unproject_position(bar_pos)
+		if sp.x < -60 or sp.x > vp.x + 60 or sp.y < -20 or sp.y > vp.y:
+			continue
+		var ratio: float = clampf(u["hp"] / u["max_hp"], 0.0, 1.0)
+		var fill_col: Color = Color(1.0, 0.32, 0.22) if turret.heavy_gun else Color(0.62, 0.66, 0.72)
+		var bar := Rect2(sp - Vector2(36, 0), Vector2(72, 7))
+		draw_rect(bar.grow(1.5), Color(0.05, 0.07, 0.05, 0.8), true)
+		draw_rect(Rect2(bar.position, Vector2(bar.size.x * ratio, bar.size.y)), fill_col, true)
+		var aboard: int = u.get("cargo_list", []).size()
+		var tag: String = ("%d ABOARD" % aboard) if aboard > 0 else "EMPTY"
+		if not turret.heavy_gun:
+			tag += " · ARMORED"
+		draw_string(font, sp + Vector2(-70, -5), tag, HORIZONTAL_ALIGNMENT_CENTER, 140.0, 11, fill_col)
+
+	for sc in combat.supply_crates:
+		if not is_instance_valid(sc["node"]):
+			continue
+		var cpos: Vector3 = sc["node"].global_position
+		if not cam.is_position_behind(cpos):
+			var sp: Vector2 = cam.unproject_position(cpos)
+			if sp.x >= 0 and sp.x <= vp.x and sp.y >= 0 and sp.y <= vp.y:
+				var col: Color = Color(1.0, 0.88, 0.2) if sc["is_golden"] else Color(0.25, 1.0, 0.55)
+				var box := Rect2(sp - Vector2(26, 26), Vector2(52, 52))
+				draw_rect(box, col, false, 2.0)
+				var lbl: String = "OVERDRIVE CRATE [SHOOT!]" if sc["is_golden"] else "SUPPLY DROP [SHOOT!]"
+				draw_string(font, sp + Vector2(-85, -32), lbl, HORIZONTAL_ALIGNMENT_CENTER, 170.0, 13, col)
+
+	var lock_u: Dictionary = turret.lock_target
+	if not lock_u.is_empty() and is_instance_valid(lock_u.get("node", null)):
+		var upos: Vector3 = lock_u["node"].global_position
+		if not cam.is_position_behind(upos):
+			var sp: Vector2 = cam.unproject_position(upos)
+			var prog: float = turret.lock_progress
+			var is_locked: bool = (prog >= 1.0)
+			var half_sz: float = lerpf(54.0, 24.0, prog)
+			var col: Color = Color(1.0, 0.18, 0.15) if is_locked else Color(1.0, 0.78, 0.18)
+			draw_rect(Rect2(sp - Vector2(half_sz, half_sz), Vector2(half_sz * 2.0, half_sz * 2.0)), col, false, 2.5)
+			var status_txt: String = "SAM LOCKED [RMB / M]" if is_locked else ("LOCKING %d%%" % int(prog * 100.0))
+			draw_string(font, sp + Vector2(-80, half_sz + 18), status_txt, HORIZONTAL_ALIGNMENT_CENTER, 160.0, 13, col)
+
+	for ft in _floating_texts:
+		var wpos: Vector3 = ft["world_pos"]
+		if not cam.is_position_behind(wpos):
+			var sp: Vector2 = cam.unproject_position(wpos)
+			var alpha: float = clampf(1.0 - (ft["age"] / ft["duration"]), 0.0, 1.0)
+			var c: Color = ft["color"]
+			c.a = alpha
+			draw_string(font, sp - Vector2(90, 0), ft["text"], HORIZONTAL_ALIGNMENT_CENTER, 180.0, 15, c)
+
+func _draw_crosshair(center: Vector2, font: Font) -> void:
+	var col_green := Color(0.45, 1.0, 0.38, 0.9)
+	var col_amber := Color(1.0, 0.82, 0.24, 0.95)
+	var col_cyan := Color(0.3, 0.95, 1.0, 0.95)
+
+	if turret.overdrive_timer > 0.0:
+		draw_arc(center, 28.0, 0.0, TAU, 24, col_cyan, 2.2)
+		draw_circle(center, 3.5, col_cyan)
+		draw_string(font, center + Vector2(-95, -36), "CIWS OVERDRIVE %.1fs" % turret.overdrive_timer, HORIZONTAL_ALIGNMENT_CENTER, 190.0, 14, col_cyan)
+	elif turret.current_weapon == 0:
+		draw_line(center + Vector2(-24, -14), center + Vector2(-10, -14), col_green, 2.0)
+		draw_line(center + Vector2(-24, -14), center + Vector2(-24, 14), col_green, 2.0)
+		draw_line(center + Vector2(-24, 14), center + Vector2(-10, 14), col_green, 2.0)
+
+		draw_line(center + Vector2(24, -14), center + Vector2(10, -14), col_green, 2.0)
+		draw_line(center + Vector2(24, -14), center + Vector2(24, 14), col_green, 2.0)
+		draw_line(center + Vector2(24, 14), center + Vector2(10, 14), col_green, 2.0)
+		draw_circle(center, 2.5, col_green)
+	elif turret.current_weapon == 1:
+		draw_arc(center, 34.0, 0.0, TAU, 32, col_amber, 1.8)
+		draw_line(center + Vector2(-44, 0), center + Vector2(-12, 0), col_amber, 2.0)
+		draw_line(center + Vector2(12, 0), center + Vector2(44, 0), col_amber, 2.0)
+		draw_line(center + Vector2(0, 10), center + Vector2(0, 48), col_amber, 2.0)
+		for tick in [18.0, 30.0, 42.0]:
+			draw_line(center + Vector2(-7, tick), center + Vector2(7, tick), col_amber, 1.5)
+		var reload_ratio: float = turret.get_cannon_reload_ratio()
+		var bar_w: float = 68.0
+		draw_rect(Rect2(center.x - bar_w * 0.5, center.y + 54.0, bar_w, 6.0), Color(0.1, 0.1, 0.1, 0.8), true)
+		var fill_col: Color = col_amber if reload_ratio >= 1.0 else Color(0.95, 0.35, 0.15)
+		draw_rect(Rect2(center.x - bar_w * 0.5, center.y + 54.0, bar_w * reload_ratio, 6.0), fill_col, true)
+	else:
+		draw_arc(center, 14.0, 0.0, TAU, 20, col_amber, 1.5)
+		draw_circle(center, 2.0, col_amber)
+
+	if _hitmarker_timer > 0.0:
+		var hm_col := Color(1.0, 0.95, 0.4, 1.0)
+		draw_line(center + Vector2(-11, -11), center + Vector2(-4, -4), hm_col, 2.4)
+		draw_line(center + Vector2(11, -11), center + Vector2(4, -4), hm_col, 2.4)
+		draw_line(center + Vector2(-11, 11), center + Vector2(-4, 4), hm_col, 2.4)
+		draw_line(center + Vector2(11, 11), center + Vector2(4, 4), hm_col, 2.4)
+
+func _draw_top_compass_and_wave(vp: Vector2, font: Font) -> void:
+	var comp_w: float = 520.0
+	var comp_x: float = (vp.x - comp_w) * 0.5
+	var comp_rect := Rect2(comp_x, 12.0, comp_w, 42.0)
+	draw_rect(comp_rect, Color(0.05, 0.09, 0.06, 0.82), true)
+	draw_rect(comp_rect, Color(0.35, 0.65, 0.28, 0.85), false, 1.8)
+
+	var cardinals: Array[Dictionary] = [
+		{"label": "N (SEA)", "ang": 0.0},
+		{"label": "NE", "ang": PI * 0.25},
+		{"label": "E", "ang": PI * 0.5},
+		{"label": "SE", "ang": PI * 0.75},
+		{"label": "S (REAR)", "ang": PI},
+		{"label": "SW", "ang": -PI * 0.75},
+		{"label": "W", "ang": -PI * 0.5},
+		{"label": "NW", "ang": -PI * 0.25}
+	]
+	for c in cardinals:
+		var rel: float = wrapf(c["ang"] + turret.yaw, -PI, PI)
+		if abs(rel) <= PI * 0.55:
+			var nx: float = comp_x + (rel / (PI * 0.55) * 0.5 + 0.5) * comp_w
+			draw_line(Vector2(nx, 12.0), Vector2(nx, 20.0), Color(0.55, 0.85, 0.45), 1.5)
+			draw_string(font, Vector2(nx - 35.0, 35.0), c["label"], HORIZONTAL_ALIGNMENT_CENTER, 70.0, 13, Color(0.75, 0.98, 0.65))
+
+	for u in combat.units:
+		if not is_instance_valid(u["node"]):
+			continue
+		var upos: Vector3 = u["node"].global_position
+		var world_ang: float = atan2(upos.x, -upos.z)
+		var rel_ang: float = wrapf(world_ang + turret.yaw, -PI, PI)
+		var clamped_ratio: float = clampf(rel_ang / (PI * 0.55), -0.96, 0.96)
+		var tx: float = comp_x + (clamped_ratio * 0.5 + 0.5) * comp_w
+		var blip_col: Color = Color(1.0, 0.85, 0.2) if u["is_air"] else (Color(1.0, 0.22, 0.18) if u["armor"] == "heavy" else Color(1.0, 0.55, 0.15))
+		draw_circle(Vector2(tx, 47.0), 4.0, blip_col)
+
+	var tl_rect := Rect2(16.0, 12.0, 310.0, 72.0)
+	draw_rect(tl_rect, Color(0.05, 0.09, 0.06, 0.82), true)
+	draw_rect(tl_rect, Color(0.35, 0.65, 0.28, 0.85), false, 1.8)
+	draw_string(font, Vector2(28.0, 34.0), "WAVE %d  |  %s" % [current_wave, time_of_day_name], HORIZONTAL_ALIGNMENT_LEFT, 290.0, 14, Color(0.85, 1.0, 0.72))
+	draw_string(font, Vector2(28.0, 55.0), "SCORE: %07d   (x%d)" % [score, multiplier], HORIZONTAL_ALIGNMENT_LEFT, 290.0, 16, Color(1.0, 0.90, 0.32))
+	draw_string(font, Vector2(28.0, 74.0), "HOSTILES NEUTRALIZED: %d / %d" % [wave_killed, wave_total], HORIZONTAL_ALIGNMENT_LEFT, 290.0, 13, Color(0.68, 0.92, 0.62))
+
+func _draw_bottom_left_status(vp: Vector2, font: Font) -> void:
+	var panel_rect := Rect2(16.0, vp.y - 162.0, 375.0, 146.0)
+	draw_rect(panel_rect, Color(0.05, 0.09, 0.06, 0.84), true)
+	draw_rect(panel_rect, Color(0.35, 0.65, 0.28, 0.85), false, 1.8)
+
+	var hp_ratio: float = clampf(bunker_hp / maxf(bunker_max_hp, 1.0), 0.0, 1.0)
+	var hp_col: Color = Color(0.32, 0.95, 0.38) if hp_ratio > 0.5 else (Color(1.0, 0.75, 0.18) if hp_ratio > 0.25 else Color(1.0, 0.2, 0.15))
+	draw_string(font, Vector2(28.0, vp.y - 138.0), "BUNKER ARMOR: %d%%" % int(round(bunker_hp)), HORIZONTAL_ALIGNMENT_LEFT, 200.0, 15, hp_col)
+	draw_rect(Rect2(190.0, vp.y - 150.0, 185.0, 14.0), Color(0.12, 0.16, 0.12), true)
+	draw_rect(Rect2(190.0, vp.y - 150.0, 185.0 * hp_ratio, 14.0), hp_col, true)
+
+	var active_w: String = turret.get_current_weapon_name()
+	draw_string(font, Vector2(28.0, vp.y - 112.0), "ACTIVE: %s" % active_w, HORIZONTAL_ALIGNMENT_LEFT, 350.0, 15, Color(1.0, 0.92, 0.35))
+
+	var mg_col: Color = Color(0.75, 1.0, 0.68) if turret.mg_ammo > 120 else Color(1.0, 0.35, 0.25)
+	var can_col: Color = Color(0.75, 1.0, 0.68) if turret.cannon_ammo > 10 else Color(1.0, 0.35, 0.25)
+	var sam_col: Color = Color(0.75, 1.0, 0.68) if turret.sam_ammo > 2 else Color(1.0, 0.35, 0.25)
+
+	draw_string(font, Vector2(28.0, vp.y - 88.0), "[1/SPACE] 30MM MG: %04d   |   [2/SPACE] %s: %02d" % [turret.mg_ammo, "155MM CG" if turret.heavy_gun else "105MM AT", turret.cannon_ammo], HORIZONTAL_ALIGNMENT_LEFT, 355.0, 14, mg_col if turret.current_weapon == 0 else can_col)
+	draw_string(font, Vector2(28.0, vp.y - 66.0), "[RMB / M] HOMING SAMs: %02d   |   [F] NIGHT FLARES: %02d" % [turret.sam_ammo, turret.flare_ammo], HORIZONTAL_ALIGNMENT_LEFT, 355.0, 14, sam_col)
+	draw_string(font, Vector2(28.0, vp.y - 44.0), "[3] 9MM BACKUP: INF   |   [ESC] PAUSE / SENSITIVITY", HORIZONTAL_ALIGNMENT_LEFT, 355.0, 12, Color(0.58, 0.78, 0.55))
+	draw_string(font, Vector2(28.0, vp.y - 24.0), "TIP: SHOOT PARACHUTE SUPPLY CRATES IN MID-AIR!", HORIZONTAL_ALIGNMENT_LEFT, 355.0, 12, Color(0.95, 0.85, 0.32))
+
+func _draw_radar_scope(vp: Vector2, font: Font) -> void:
+	var r_radius: float = 82.0
+	var r_center := Vector2(vp.x - r_radius - 24.0, vp.y - r_radius - 24.0)
+
+	draw_circle(r_center, r_radius + 4.0, Color(0.04, 0.08, 0.05, 0.88))
+	draw_arc(r_center, r_radius, 0.0, TAU, 48, Color(0.35, 0.85, 0.32, 0.9), 2.0)
+	draw_arc(r_center, r_radius * 0.66, 0.0, TAU, 36, Color(0.25, 0.62, 0.22, 0.55), 1.0)
+	draw_arc(r_center, r_radius * 0.33, 0.0, TAU, 24, Color(0.25, 0.62, 0.22, 0.55), 1.0)
+
+	var fov_half: float = deg_to_rad(34.0)
+	draw_line(r_center, r_center + Vector2(-sin(fov_half), -cos(fov_half)) * r_radius, Color(0.45, 0.95, 0.42, 0.45), 1.2)
+	draw_line(r_center, r_center + Vector2(sin(fov_half), -cos(fov_half)) * r_radius, Color(0.45, 0.95, 0.42, 0.45), 1.2)
+
+	var sweep_vec := Vector2(sin(_radar_sweep_angle), -cos(_radar_sweep_angle)) * r_radius
+	draw_line(r_center, r_center + sweep_vec, Color(0.45, 1.0, 0.45, 0.55), 1.8)
+
+	var max_radar_dist: float = 260.0
+	for u in combat.units:
+		if not is_instance_valid(u["node"]):
+			continue
+		var upos: Vector3 = u["node"].global_position
+		var world_ang: float = atan2(upos.x, -upos.z)
+		var rel_ang: float = wrapf(world_ang + turret.yaw, -PI, PI)
+		var dist_ratio: float = clampf(Vector2(upos.x, upos.z).length() / max_radar_dist, 0.0, 0.95)
+		var b_pos: Vector2 = r_center + Vector2(sin(rel_ang), -cos(rel_ang)) * (dist_ratio * r_radius)
+
+		if u["is_air"]:
+			draw_circle(b_pos, 3.8, Color(1.0, 0.90, 0.22))
+		elif u["armor"] == "heavy":
+			draw_rect(Rect2(b_pos - Vector2(3.5, 3.5), Vector2(7.0, 7.0)), Color(1.0, 0.22, 0.18), true)
+		else:
+			draw_circle(b_pos, 3.0, Color(1.0, 0.58, 0.18))
+
+	for sc in combat.supply_crates:
+		if not is_instance_valid(sc["node"]):
+			continue
+		var cpos: Vector3 = sc["node"].global_position
+		var world_ang: float = atan2(cpos.x, -cpos.z)
+		var rel_ang: float = wrapf(world_ang + turret.yaw, -PI, PI)
+		var dist_ratio: float = clampf(Vector2(cpos.x, cpos.z).length() / max_radar_dist, 0.0, 0.95)
+		var b_pos: Vector2 = r_center + Vector2(sin(rel_ang), -cos(rel_ang)) * (dist_ratio * r_radius)
+		draw_circle(b_pos, 4.5, Color(0.25, 1.0, 0.95))
+
+	draw_circle(r_center, 3.5, Color(0.65, 1.0, 0.65))
+	draw_string(font, r_center + Vector2(-75.0, -r_radius - 10.0), "360° TACTICAL RADAR", HORIZONTAL_ALIGNMENT_CENTER, 150.0, 12, Color(0.65, 0.95, 0.58))
+
+func _build_menus() -> void:
+	title_panel = _make_modal_panel(Vector2(680, 460))
+	var tv := VBoxContainer.new()
+	tv.add_theme_constant_override("separation", 12)
+	title_panel.add_child(tv)
+
+	_add_label(tv, "IRON HORIZON", 28, Color(0.85, 1.0, 0.55))
+	_add_label(tv, "360° COASTAL BUNKER DEFENSE  —  CLASSIC MILITARY ARCADE EDITION", 15, Color(0.95, 0.85, 0.35))
+	_add_label(tv,
+		"TACTICAL BRIEFING & CONTROLS:\n" +
+		"• MOUSE / TOUCH DRAG / WASD: Rotate Turret 360° Horizontally & Pitch Up/Down\n" +
+		"• LEFT CLICK / [ENTER] (HOLD): Fire Active Primary Weapon\n" +
+		"• [SPACE] / [Q] / [1, 2]: Switch between Dual 30mm Autocannon & 105mm Anti-Tank Howitzer\n" +
+		"• RIGHT CLICK / [M]: Fire Guided Surface-to-Air Missile (Wait for Red Lock-On Tone!)\n" +
+		"• [F] KEY: Launch Parachute Illumination Flare (Crucial for Dusk & Night Missions)\n\n" +
+		"SURVIVAL RULES:\n" +
+		"1. 30mm MG shreds Infantry, Paratroopers, Aircraft & Incoming Rockets, but RICOCHETS off Tanks/Ships!\n" +
+		"2. Troops & tanks land by boat: hit them as the ramp drops! Sinking boats needs the 155mm Coastal Gun\n" +
+		"3. Watch your 360° Radar for Chinook Choppers dropping Paratroopers BEHIND your bunker!\n" +
+		"4. Shoot friendly Yellow-'X' Parachute Supply Crates BEFORE they hit the ground to resupply!",
+		14, Color(0.84, 0.92, 0.80), HORIZONTAL_ALIGNMENT_LEFT
+	)
+	var start_btn := _make_button("CLICK TO MAN THE BUNKER (START WAVE 1)")
+	start_btn.pressed.connect(func() -> void: start_mission_requested.emit())
+	tv.add_child(start_btn)
+
+	shop_panel = _make_modal_panel(Vector2(660, 480))
+	var sv := VBoxContainer.new()
+	sv.add_theme_constant_override("separation", 10)
+	shop_panel.add_child(sv)
+	_add_label(sv, "SECTOR SECURED — TACTICAL RESUPPLY & BUNKER UPGRADES", 22, Color(0.85, 1.0, 0.55))
+	shop_score_label = _add_label(sv, "SCORE: 0", 15, Color(1.0, 0.9, 0.35))
+
+	var upgrades: Array[Dictionary] = [
+		{"id": "repair", "cost": 800, "title": "REPAIR BUNKER ARMOR (+35% Hull Integrity) — 800 PTS"},
+		{"id": "ammo_pack", "cost": 600, "title": "EMERGENCY ORDNANCE CRATE (+400 30mm, +25 Shells, +6 SAMs) — 600 PTS"},
+		{"id": "mg_rate", "cost": 1200, "title": "HIGH-SPEED 30MM ROTARY FEED (+20% MG Fire Rate) — 1200 PTS"},
+		{"id": "coastal_gun", "cost": 8000, "title": "155MM COASTAL GUN (Replaces 105mm — Pierces Landing Craft Hulls) — 8000 PTS"},
+		{"id": "cannon_autoloader", "cost": 1400, "title": "105MM HYDRAULIC AUTOLOADER (+22% Faster Cannon Reload) — 1400 PTS"},
+		{"id": "sam_radar", "cost": 1100, "title": "DOPPLER SAM SEEKER UPGRADE (+30% Faster Missile Lock) — 1100 PTS"}
+	]
+	for upg in upgrades:
+		var u_id: String = upg["id"]
+		var u_cost: int = upg["cost"]
+		var btn := _make_button(upg["title"])
+		btn.pressed.connect(func() -> void: upgrade_purchased.emit(u_id, u_cost))
+		if u_id == "coastal_gun":
+			_coastal_gun_btn = btn
+		sv.add_child(btn)
+
+	var next_btn := _make_button("DEPLOY TO NEXT INVASION WAVE >>")
+	next_btn.pressed.connect(func() -> void: next_wave_requested.emit())
+	sv.add_child(next_btn)
+
+	pause_panel = _make_modal_panel(Vector2(480, 280))
+	var pv := VBoxContainer.new()
+	pv.add_theme_constant_override("separation", 14)
+	pause_panel.add_child(pv)
+	_add_label(pv, "COMBAT PAUSED", 24, Color(0.85, 1.0, 0.55))
+	_add_label(pv, "MOUSE AIM SENSITIVITY:", 14, Color(0.85, 0.92, 0.82))
+	var sens_slider := HSlider.new()
+	sens_slider.min_value = 0.0008
+	sens_slider.max_value = 0.0060
+	sens_slider.step = 0.0002
+	sens_slider.value = 0.0024
+	sens_slider.value_changed.connect(func(v: float) -> void: sensitivity_changed.emit(v))
+	pv.add_child(sens_slider)
+
+	var resume_btn := _make_button("RESUME COMBAT (LOCK MOUSE)")
+	resume_btn.pressed.connect(func() -> void: resume_requested.emit())
+	pv.add_child(resume_btn)
+
+	gameover_panel = _make_modal_panel(Vector2(540, 280))
+	var gv := VBoxContainer.new()
+	gv.add_theme_constant_override("separation", 16)
+	gameover_panel.add_child(gv)
+	_add_label(gv, "BUNKER DESTROYED — THE BEACH HAS FALLEN", 22, Color(1.0, 0.32, 0.22))
+	gameover_stats_label = _add_label(gv, "", 16, Color(1.0, 0.9, 0.35))
+	var retry_btn := _make_button("MAN A NEW BUNKER (PLAY AGAIN)")
+	retry_btn.pressed.connect(func() -> void: start_mission_requested.emit())
+	gv.add_child(retry_btn)
+
+func _make_modal_panel(sz: Vector2) -> PanelContainer:
+	var pc := PanelContainer.new()
+	pc.custom_minimum_size = sz
+	pc.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	pc.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	pc.grow_vertical = Control.GROW_DIRECTION_BOTH
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.06, 0.11, 0.07, 0.94)
+	sb.border_color = Color(0.45, 0.78, 0.35, 1.0)
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(6)
+	sb.set_content_margin_all(22)
+	pc.add_theme_stylebox_override("panel", sb)
+	add_child(pc)
+	return pc
+
+func _add_label(parent: Node, txt: String, font_sz: int, col: Color, align: HorizontalAlignment = HORIZONTAL_ALIGNMENT_CENTER) -> Label:
+	var lbl := Label.new()
+	lbl.text = txt
+	lbl.horizontal_alignment = align
+	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lbl.add_theme_font_size_override("font_size", font_sz)
+	lbl.add_theme_color_override("font_color", col)
+	parent.add_child(lbl)
+	return lbl
+
+func _make_button(txt: String) -> Button:
+	var btn := Button.new()
+	btn.text = txt
+	btn.custom_minimum_size = Vector2(0, 42)
+	var sb_norm := StyleBoxFlat.new()
+	sb_norm.bg_color = Color(0.16, 0.28, 0.14, 1.0)
+	sb_norm.border_color = Color(0.58, 0.88, 0.42, 1.0)
+	sb_norm.set_border_width_all(2)
+	sb_norm.set_corner_radius_all(4)
+	var sb_hover := sb_norm.duplicate()
+	sb_hover.bg_color = Color(0.26, 0.44, 0.20, 1.0)
+	btn.add_theme_stylebox_override("normal", sb_norm)
+	btn.add_theme_stylebox_override("hover", sb_hover)
+	btn.add_theme_stylebox_override("pressed", sb_hover)
+	btn.add_theme_font_size_override("font_size", 15)
+	btn.add_theme_color_override("font_color", Color(0.95, 1.0, 0.88))
+	return btn
+
