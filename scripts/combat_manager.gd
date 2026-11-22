@@ -15,6 +15,7 @@ signal supply_claimed(world_pos: Vector3, is_golden: bool)
 signal supply_lost(world_pos: Vector3)
 signal supply_plane_inbound()
 signal paratrooper_Alert(world_pos: Vector3)
+signal new_threat_spotted(unit_type_name: String, world_pos: Vector3)
 signal bunker_damaged(amount: float, source_pos: Vector3)
 signal wave_quota_updated(killed: int, total: int)
 signal wave_completed()
@@ -27,8 +28,14 @@ enum UnitType {
 	LANDING_CRAFT,
 	ATTACK_HELI,
 	TRANSPORT_HELI,
-	FIGHTER_JET
+	FIGHTER_JET,
+	MORTAR_TEAM,
+	KAMIKAZE_DRONE,
+	GUNBOAT
 }
+
+# First-sighting warnings for the newer threats, shown once per game
+var _threats_announced: Dictionary = {}
 
 const BUNKER_TARGET_POS := Vector3(0.0, UnitFactoryScript.HILL_TOP_Y + 1.5, 0.0)
 
@@ -109,6 +116,10 @@ func _init_shared_resources() -> void:
 	_mat_smoke.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_mat_smoke.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_mat_smoke.albedo_color = Color(0.85, 0.85, 0.82, 0.55)
+
+## Forget which new threats were already announced (call when a new game starts)
+func reset_threat_warnings() -> void:
+	_threats_announced.clear()
 
 func clear_all() -> void:
 	wave_active = false
@@ -194,6 +205,10 @@ func _build_wave_plan(w: int) -> void:
 		[UnitType.TANK, 6, 5, 1.0 + w * 0.15],
 		[UnitType.TRANSPORT_HELI, 5, 6, 1.2],
 		[UnitType.FIGHTER_JET, 4, 3, 1.0 + w * 0.1],
+		# Gunboats only exist on sea headings (weight 0 keeps them out of overland waves)
+		[UnitType.GUNBOAT, 6, 7, 0.8 if sea else 0.0],
+		[UnitType.MORTAR_TEAM, 4, 8, 1.3],
+		[UnitType.KAMIKAZE_DRONE, 5, 9, 1.0 + w * 0.05],
 	]
 	var budget: int = 12 + w * 5
 	var intro: Dictionary = {}
@@ -204,13 +219,13 @@ func _build_wave_plan(w: int) -> void:
 	while budget >= 3:
 		var total_weight: float = 0.0
 		for entry in roster:
-			if entry[2] <= w and entry[1] <= budget:
+			if entry[2] <= w and entry[1] <= budget and entry[3] > 0.0:
 				total_weight += entry[3]
 		if total_weight <= 0.0:
 			break
 		var roll: float = _rng.randf() * total_weight
 		for entry in roster:
-			if entry[2] <= w and entry[1] <= budget:
+			if entry[2] <= w and entry[1] <= budget and entry[3] > 0.0:
 				roll -= entry[3]
 				if roll <= 0.0:
 					_wave_plan.append(_make_formation(entry[0], w))
@@ -251,6 +266,15 @@ func _make_formation(t: int, w: int) -> Dictionary:
 			f["cargo"] = 3 + mini(w - 1, 3)
 		UnitType.TRANSPORT_HELI:
 			f["cargo"] = 2 + mini(int(w / 3.0), 3)
+		UnitType.MORTAR_TEAM:
+			# From the sea the crew rides in with an infantry escort
+			if is_sea_heading():
+				f["type"] = UnitType.LANDING_CRAFT
+				f["cargo_list"].append(UnitType.MORTAR_TEAM)
+				f["cargo_list"].append(UnitType.INFANTRY)
+				f["cargo_list"].append(UnitType.INFANTRY)
+		UnitType.KAMIKAZE_DRONE:
+			f["count"] = 4 + mini(int((w - 9) / 2.0), 3)
 	if f["type"] == UnitType.LANDING_CRAFT:
 		f["cargo"] = f["cargo_list"].size()
 	return f
@@ -320,10 +344,31 @@ func _spawn_formation(f: Dictionary) -> void:
 			u = spawn_unit(UnitType.ATTACK_HELI, _heading_out(15.0) * _rng.randf_range(190.0, 230.0) + Vector3(0.0, _rng.randf_range(30.0, 52.0), 0.0))
 		UnitType.TRANSPORT_HELI:
 			u = spawn_transport_run(f["cargo"])
+		UnitType.MORTAR_TEAM:
+			u = spawn_unit(UnitType.MORTAR_TEAM, out * _rng.randf_range(150.0, 165.0) + side * lateral)
+		UnitType.GUNBOAT:
+			u = spawn_unit(UnitType.GUNBOAT, out * _rng.randf_range(230.0, 250.0) + side * lateral)
+		UnitType.KAMIKAZE_DRONE:
+			_spawn_drone_swarm(f["count"])
 		UnitType.FIGHTER_JET:
 			u = spawn_fighter_jet_pass()
 	if not u.is_empty():
 		u["cargo"] = f["cargo"]
+
+## Drones arrive as a loose V at low altitude; each one dives on the bunker on its own
+func _spawn_drone_swarm(count: int) -> void:
+	var out: Vector3 = _heading_out(10.0)
+	var side: Vector3 = _heading_side()
+	var lead: Vector3 = out * _rng.randf_range(230.0, 250.0) + side * _rng.randf_range(-30.0, 30.0)
+	lead.y = _rng.randf_range(34.0, 44.0)
+	for k in range(count):
+		var rank: int = int((k + 1) / 2.0)
+		var wing: float = 0.0 if k == 0 else (-1.0 if k % 2 == 1 else 1.0)
+		var p: Vector3 = lead + side * wing * rank * 7.0 + out * rank * 6.0 + Vector3(0.0, _rng.randf_range(-3.0, 3.0), 0.0)
+		var d: Dictionary = spawn_unit(UnitType.KAMIKAZE_DRONE, p)
+		# Each drone breaks off at a slightly different range so they don't all hit at once
+		d["dive_dist"] = _rng.randf_range(70.0, 105.0)
+		d["weave"] = _rng.randf_range(0.6, 1.4)
 
 ## Transport flies in along the wave heading, over the bunker, and out the far side,
 ## dropping paratroopers on the way
@@ -339,6 +384,9 @@ func spawn_transport_run(drops: int) -> Dictionary:
 
 ## Jets start far out so they're visible crossing the sky, and the radar raises
 ## an air-raid warning the moment they appear (~7 s before they can attack)
+const MORTAR_GRAVITY := 14.0
+const GUNBOAT_PATROL_Z := -128.0
+const GUNBOAT_PATROL_HALF_WIDTH := 75.0
 const JET_SPAWN_DIST := 520.0
 const JET_ATTACK_DIST := 165.0
 
@@ -451,6 +499,32 @@ func spawn_unit(u_type: int, pos: Vector3) -> Dictionary:
 			points = 500
 			type_name = "STRIKE FIGHTER"
 			is_air = true
+		UnitType.MORTAR_TEAM:
+			built = UnitFactoryScript.build_mortar_team()
+			hp = 30.0 * _hp_mult
+			radius = 2.4
+			speed = 5.2 + aggression * 0.3
+			armor = "soft"
+			points = 250
+			type_name = "MORTAR TEAM"
+		UnitType.KAMIKAZE_DRONE:
+			built = UnitFactoryScript.build_kamikaze_drone()
+			hp = 14.0 * _hp_mult
+			radius = 2.1
+			speed = 34.0 + aggression * 1.2
+			armor = "soft"
+			points = 120
+			type_name = "KAMIKAZE DRONE"
+			is_air = true
+		UnitType.GUNBOAT:
+			built = UnitFactoryScript.build_gunboat()
+			hp = 170.0 * _hp_mult
+			radius = 4.4
+			speed = 20.0 + aggression * 0.9
+			# Light armor: 30mm ricochets as it does off tanks, but the 105mm sinks it
+			armor = "heavy"
+			points = 450
+			type_name = "ROCKET GUNBOAT"
 
 	var node: Node3D = built["root"]
 	add_child(node)
@@ -481,8 +555,17 @@ func spawn_unit(u_type: int, pos: Vector3) -> Dictionary:
 		"ramp_pivot": built.get("ramp_pivot", null),
 		"canopy": built.get("canopy", null)
 	}
+	if u_type == UnitType.MORTAR_TEAM:
+		# Digs in just outside rifle range of the hill
+		unit_data["setup_dist"] = _rng.randf_range(108.0, 126.0)
+	elif u_type == UnitType.GUNBOAT:
+		unit_data["strafe_dir"] = -1.0 if _rng.randf() < 0.5 else 1.0
+		unit_data["passes_left"] = 3
 	units.append(unit_data)
 	wave_spawned += 1
+	if u_type in [UnitType.MORTAR_TEAM, UnitType.KAMIKAZE_DRONE, UnitType.GUNBOAT] and not _threats_announced.has(u_type):
+		_threats_announced[u_type] = true
+		new_threat_spotted.emit(type_name, pos)
 	return unit_data
 
 func _update_units(delta: float) -> void:
@@ -678,6 +761,98 @@ func _update_units(delta: float) -> void:
 						units.remove_at(i)
 						continue
 
+			UnitType.MORTAR_TEAM:
+				# Walks to standoff range (beyond rifle range), sets up, then lobs high-arc
+				# shells. The shells hang in the air for seconds, so the 30mm can swat them.
+				if u["state"] == "approach":
+					if horiz_dist > u.get("setup_dist", 120.0):
+						pos += dir_to_bunker * u["speed"] * delta
+						pos.y = UnitFactoryScript.get_ground_height(pos.x, pos.z)
+						node.position = pos
+						node.look_at(pos + dir_to_bunker, Vector3.UP, true)
+					else:
+						u["state"] = "setup"
+						u["state_timer"] = 2.2
+				elif u["state"] == "setup":
+					u["state_timer"] -= delta
+					if u["state_timer"] <= 0.0:
+						u["state"] = "firing"
+						u["fire_timer"] = 0.6
+				else:
+					u["fire_timer"] -= delta * (0.75 + aggression * 0.08)
+					if u["fire_timer"] <= 0.0:
+						u["fire_timer"] = _rng.randf_range(5.2, 7.0)
+						var muzzle: Vector3 = node.global_transform * Vector3(0.0, 1.7, 1.3)
+						_spawn_enemy_mortar(muzzle, BUNKER_TARGET_POS + Vector3(_rng.randf_range(-1.2, 1.2), 0.0, _rng.randf_range(-1.2, 1.2)), 5.0, 7.0)
+						if fx:
+							fx.spawn_surface_impact(muzzle, false, 0.6)
+						if sfx:
+							sfx.play("cannon_fire", -14.0, 0.55)
+
+			UnitType.KAMIKAZE_DRONE:
+				# Cruise in low with a lazy weave, then each drone tips over into a dive
+				var hit_bunker: bool = false
+				if u["state"] == "approach":
+					u["strafe_phase"] += delta * 2.2 * u.get("weave", 1.0)
+					var tangent := Vector3(-dir_to_bunker.z, 0.0, dir_to_bunker.x)
+					var fly: Vector3 = (dir_to_bunker + tangent * sin(u["strafe_phase"]) * 0.3).normalized()
+					pos += fly * u["speed"] * delta
+					pos.y = lerpf(pos.y, 30.0 + sin(u["strafe_phase"] * 0.7) * 3.0, 1.5 * delta)
+					node.position = pos
+					node.look_at(pos + fly, Vector3.UP, true)
+					if horiz_dist < u.get("dive_dist", 90.0):
+						u["state"] = "dive"
+				else:
+					var dive_dir: Vector3 = (BUNKER_TARGET_POS - pos).normalized()
+					pos += dive_dir * u["speed"] * 1.4 * delta
+					node.position = pos
+					node.look_at(pos + dive_dir, Vector3.UP, true)
+					hit_bunker = pos.distance_to(BUNKER_TARGET_POS) < 4.5
+				if hit_bunker or pos.y <= UnitFactoryScript.get_ground_height(pos.x, pos.z):
+					if hit_bunker:
+						bunker_damaged.emit(6.0, pos - dir_to_bunker * 20.0)
+					if fx:
+						fx.spawn_explosion(pos, 1.1, false)
+					if sfx:
+						sfx.play("explosion_small", -2.0, _rng.randf_range(1.0, 1.2))
+					# A drone that blew itself up is gone without a kill
+					_mark_escaped(u)
+					node.queue_free()
+					units.remove_at(i)
+					continue
+
+			UnitType.GUNBOAT:
+				# Runs in to a patrol line offshore, then strafes back and forth along the
+				# beach firing rockets, and heads back out to sea after a few passes
+				if u["state"] == "approach":
+					pos += dir_to_bunker * u["speed"] * delta
+					node.look_at(pos + dir_to_bunker, Vector3.UP, true)
+					if pos.z >= GUNBOAT_PATROL_Z:
+						u["state"] = "patrol"
+				elif u["state"] == "patrol":
+					var run := Vector3(u["strafe_dir"], 0.0, 0.0)
+					pos += run * u["speed"] * delta
+					node.look_at(pos + run, Vector3.UP, true)
+					if absf(pos.x) > GUNBOAT_PATROL_HALF_WIDTH and signf(pos.x) == u["strafe_dir"]:
+						u["strafe_dir"] = -u["strafe_dir"]
+						u["passes_left"] -= 1
+						if u["passes_left"] <= 0:
+							u["state"] = "retreat"
+							_mark_escaped(u)
+					_enemy_fire_check(u, delta, 3.4, 9.0, true)
+				else:
+					pos += Vector3(0.0, 0.0, -1.0) * u["speed"] * 1.1 * delta
+					node.look_at(pos + Vector3(0.0, 0.0, -1.0), Vector3.UP, true)
+					if pos.z < -265.0:
+						node.queue_free()
+						units.remove_at(i)
+						continue
+				# Gentle bob on the swell
+				pos.y = sin(Time.get_ticks_msec() * 0.003 + u["strafe_phase"]) * 0.25
+				node.position = pos
+				if u["turret"] != null and is_instance_valid(u["turret"]):
+					u["turret"].look_at(Vector3(0.0, u["turret"].global_position.y, 0.0), Vector3.UP, true)
+
 ## Walks one passenger out over the lowered ramp onto the beach
 func _disembark_one(lc: Dictionary, unit_type: int, dir_to_bunker: Vector3) -> void:
 	var node: Node3D = lc["node"]
@@ -871,6 +1046,32 @@ func _spawn_enemy_projectile(origin: Vector3, target_pos: Vector3, speed: float,
 		"splash": 0.0,
 		"age": 0.0,
 		"max_age": 6.0,
+		"smoke_timer": 0.0
+	})
+
+## High-arc mortar round: solves the launch velocity so the shell lands on the target
+## after flight_time seconds. Shootable, so the 30mm can intercept it on the way down.
+func _spawn_enemy_mortar(origin: Vector3, target_pos: Vector3, flight_time: float, damage: float) -> void:
+	var mi := MeshInstance3D.new()
+	mi.mesh = _shell_mesh
+	mi.scale = Vector3.ONE * 1.25
+	mi.material_override = _mat_enemy_proj
+	mi.position = origin
+	add_child(mi)
+	var vel: Vector3 = (target_pos - origin) / flight_time
+	vel.y += 0.5 * MORTAR_GRAVITY * flight_time
+	projectiles.append({
+		"node": mi,
+		"kind": "enemy_ordnance",
+		"is_player": false,
+		"shootable": true,
+		"vel": vel,
+		"speed": vel.length(),
+		"gravity": MORTAR_GRAVITY,
+		"damage": damage,
+		"splash": 0.0,
+		"age": 0.0,
+		"max_age": flight_time + 3.0,
 		"smoke_timer": 0.0
 	})
 

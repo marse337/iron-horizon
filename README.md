@@ -18,13 +18,17 @@ A 3D arcade coastal-defense shooter built in **Godot 4.7** (`gl_compatibility` /
 
 ## How It Plays
 
-- **Waves from one direction at a time.** Each wave has a fixed roster and a single approach heading, starting straight in from the sea. New enemy types unlock one per wave: infantry → APCs → helicopters → tanks → paratrooper transports → jets. Enemy health rises 12% per wave.
+- **Waves from one direction at a time.** Each wave has a fixed roster and a single approach heading, starting straight in from the sea. New enemy types unlock one per wave: infantry → APCs → jets → helicopters → tanks → paratrooper transports → rocket gunboats → mortar teams → kamikaze drone swarms. The first time each of the last three appears, a banner names it and its counter. Enemy health rises 12% per wave.
 - **Amphibious landings.** Troops and tanks arrive in landing craft. Each boat beaches, drops its bow ramp onto the sand, and unloads one soldier at a time. Nothing aboard can shoot until the ramp is down.
 - **Weapon matchups.**
   - **30mm autocannon** shreds infantry, paratroopers, helicopters and incoming rockets, but ricochets off tanks and APCs.
   - **105mm cannon** kills armor with splash damage, but can't pierce a landing craft's hull.
   - **155mm Coastal Gun** (shop upgrade) replaces the 105mm and can sink landing craft, taking everyone aboard down with them.
   - **Homing SAMs** lock onto aircraft.
+- **Late-game threats.**
+  - **Rocket gunboats** (sea waves only) run in to a patrol line offshore and strafe along the beach firing rockets, then head back out to sea after three passes. The 30mm ricochets off them; use the 105mm/155mm.
+  - **Mortar teams** dig in just outside rifle range and lob slow, high-arc shells. Shoot the shells down with the 30mm, or hit the crew.
+  - **Kamikaze drone swarms** fly in low in a V and each drone dives on the bunker. They're fragile: hose them with the 30mm before they tip over.
 - **Supply drops.** Friendly cargo planes drop parachute crates. Shoot a crate before it lands to claim ammo and repairs, or CIWS Overdrive from golden crates.
 - **Between-wave shop.** Spend score on repairs, ammo, fire-rate and reload upgrades, and the Coastal Gun.
 - **Time-of-day cycle.** Dawn → noon → dusk → night, with a searchlight and flares for the dark waves.

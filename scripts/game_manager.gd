@@ -230,6 +230,7 @@ func _connect_signals() -> void:
 	combat.supply_lost.connect(_on_supply_lost)
 	combat.supply_plane_inbound.connect(_on_supply_plane_inbound)
 	combat.paratrooper_Alert.connect(_on_paratrooper_alert)
+	combat.new_threat_spotted.connect(_on_new_threat_spotted)
 	combat.bunker_damaged.connect(_on_bunker_damaged)
 	combat.wave_quota_updated.connect(_on_wave_quota_updated)
 	combat.wave_completed.connect(_on_wave_completed)
@@ -283,6 +284,7 @@ func _on_start_mission() -> void:
 	hud.current_wave = current_wave
 
 	fx.clear_all()
+	combat.reset_threat_warnings()
 	turret.reset_for_new_game()
 	_apply_time_of_day(current_wave)
 	combat.start_wave(current_wave)
@@ -377,6 +379,22 @@ func _on_supply_lost(world_pos: Vector3) -> void:
 
 func _on_supply_plane_inbound() -> void:
 	hud.show_banner("C-130 SUPPLY DROP INBOUND — SHOOT THE PARACHUTE CRATES!", Color(0.35, 1.0, 0.85), 3.5)
+
+## First sighting of each newer enemy type: name it and say what counters it
+func _on_new_threat_spotted(type_name: String, world_pos: Vector3) -> void:
+	var cannon: String = "155MM" if turret.heavy_gun else "105MM"
+	var hint: String = ""
+	match type_name:
+		"MORTAR TEAM":
+			hint = "MORTAR TEAM DIGGING IN TO THE %s! SHOOT DOWN ITS SHELLS, OR HIT THE CREW" % hud.bearing_name(world_pos)
+		"KAMIKAZE DRONE":
+			hint = "KAMIKAZE DRONE SWARM FROM THE %s! HOSE THEM WITH THE 30MM BEFORE THEY DIVE" % hud.bearing_name(world_pos)
+		"ROCKET GUNBOAT":
+			hint = "ROCKET GUNBOAT OFFSHORE! 30MM WON'T PIERCE IT: USE THE %s" % cannon
+		_:
+			return
+	sfx.play("air_raid" if type_name == "KAMIKAZE DRONE" else "sam_locked", -4.0, 0.9)
+	hud.show_banner(hint, Color(1.0, 0.55, 0.2), 4.0)
 
 func _on_paratrooper_alert(_world_pos: Vector3) -> void:
 	hud.show_banner("WARNING: PARATROOPERS DROPPING BEHIND BUNKER! CHECK 360° RADAR!", Color(1.0, 0.35, 0.22), 3.2)

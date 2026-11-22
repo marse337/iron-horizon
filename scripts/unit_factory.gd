@@ -441,3 +441,88 @@ static func build_supply_crate(is_golden: bool = false) -> Dictionary:
 
 	return {"root": root, "canopy": canopy}
 
+
+## 11. Mortar Team (two-man crew with a bipod tube that lobs shells over the slope)
+static func build_mortar_team() -> Dictionary:
+	var root := Node3D.new()
+	var mat_steel := make_mat(Color(0.20, 0.22, 0.19), 0.55, 0.45)
+	var mat_plate := make_mat(Color(0.26, 0.28, 0.22), 0.8, 0.2)
+	var mat_crate := make_mat(Color(0.40, 0.34, 0.20), 0.85, 0.0)
+
+	# Base plate, tube pitched up toward the bunker (+Z), and the bipod legs
+	add_cyl(root, 0.55, 0.65, 0.12, Vector3(0.0, 0.06, -0.2), mat_plate)
+	var tube := Node3D.new()
+	tube.position = Vector3(0.0, 0.15, -0.2)
+	tube.rotation_degrees.x = -55.0
+	root.add_child(tube)
+	add_cyl(tube, 0.13, 0.15, 1.9, Vector3(0.0, 0.0, 0.95), mat_steel, Vector3(90, 0, 0))
+	add_cyl(root, 0.04, 0.04, 1.2, Vector3(-0.35, 0.55, 0.55), mat_steel, Vector3(-20, 0, 20))
+	add_cyl(root, 0.04, 0.04, 1.2, Vector3(0.35, 0.55, 0.55), mat_steel, Vector3(-20, 0, -20))
+	# Ammo box
+	add_box(root, Vector3(0.7, 0.45, 0.45), Vector3(1.4, 0.23, -0.9), mat_crate)
+
+	# Crew: a loader beside the tube and a spotter behind it, kneeling (scaled down)
+	var loader: Node3D = build_infantry()["root"]
+	loader.position = Vector3(-1.3, 0.0, -0.6)
+	loader.scale = Vector3(1.0, 0.78, 1.0)
+	root.add_child(loader)
+	var spotter: Node3D = build_infantry()["root"]
+	spotter.position = Vector3(1.0, 0.0, -1.9)
+	spotter.scale = Vector3(1.0, 0.78, 1.0)
+	root.add_child(spotter)
+
+	return {"root": root, "turret": tube}
+
+## 12. Kamikaze Drone (small delta-wing loitering munition with a pusher prop)
+static func build_kamikaze_drone() -> Dictionary:
+	var root := Node3D.new()
+	var mat_body := make_mat(Color(0.62, 0.58, 0.48), 0.6, 0.1)
+	var mat_dark := make_mat(Color(0.16, 0.16, 0.15), 0.7, 0.3)
+	var mat_warhead := make_mat(Color(1.0, 0.25, 0.12), 0.2, 0.0, true)
+
+	# Fuselage with a glowing red warhead nose so the swarm reads as "explosive"
+	add_box(root, Vector3(0.55, 0.45, 2.6), Vector3.ZERO, mat_body)
+	add_cyl(root, 0.05, 0.28, 0.7, Vector3(0.0, 0.0, 1.6), mat_warhead, Vector3(-90, 0, 0))
+	# Swept delta wings (two angled slabs) and wingtip fins
+	add_box(root, Vector3(2.0, 0.08, 1.3), Vector3(-0.95, 0.0, -0.4), mat_body, Vector3(0, -28, 0))
+	add_box(root, Vector3(2.0, 0.08, 1.3), Vector3(0.95, 0.0, -0.4), mat_body, Vector3(0, 28, 0))
+	add_box(root, Vector3(0.06, 0.5, 0.55), Vector3(-1.75, 0.2, -1.0), mat_dark)
+	add_box(root, Vector3(0.06, 0.5, 0.55), Vector3(1.75, 0.2, -1.0), mat_dark)
+	# Pusher propeller at the tail (spun in combat like a rotor, around the long axis)
+	var prop_hub := Node3D.new()
+	prop_hub.position = Vector3(0.0, 0.0, -1.4)
+	root.add_child(prop_hub)
+	var prop := Node3D.new()
+	prop.rotation_degrees.x = 90.0
+	prop_hub.add_child(prop)
+	add_box(prop, Vector3(1.1, 0.04, 0.14), Vector3.ZERO, mat_dark)
+
+	return {"root": root, "rotor": prop}
+
+## 13. Rocket Gunboat (fast armored patrol boat that strafes along the shoreline)
+static func build_gunboat() -> Dictionary:
+	var root := Node3D.new()
+	var mat_hull := make_mat(Color(0.30, 0.34, 0.37), 0.65, 0.25)
+	var mat_deck := make_mat(Color(0.20, 0.23, 0.25), 0.85, 0.1)
+	var mat_glass := make_mat(Color(0.16, 0.24, 0.30), 0.25, 0.4)
+	var mat_pod := make_mat(Color(0.22, 0.26, 0.18), 0.7, 0.3)
+	var mat_foam := make_mat(Color(0.88, 0.95, 1.0), 0.4, 0.0, true)
+
+	# Long narrow hull with a pointed bow (+Z forward)
+	add_box(root, Vector3(3.6, 1.3, 11.0), Vector3(0.0, 0.65, 0.0), mat_hull)
+	add_box(root, Vector3(2.55, 1.28, 2.55), Vector3(0.0, 0.65, 5.4), mat_hull, Vector3(0, 45, 0))
+	add_box(root, Vector3(3.3, 0.12, 10.6), Vector3(0.0, 1.32, -0.2), mat_deck)
+	# Wheelhouse
+	add_box(root, Vector3(2.4, 1.6, 3.0), Vector3(0.0, 2.1, -1.2), mat_hull)
+	add_box(root, Vector3(2.2, 0.6, 0.1), Vector3(0.0, 2.45, 0.32), mat_glass)
+	add_cyl(root, 0.08, 0.08, 1.8, Vector3(0.0, 3.8, -1.8), mat_deck)
+	# Rotating rocket-pod mount on the foredeck
+	var turret := Node3D.new()
+	turret.position = Vector3(0.0, 1.6, 2.8)
+	root.add_child(turret)
+	add_cyl(turret, 0.55, 0.65, 0.4, Vector3.ZERO, mat_deck)
+	add_box(turret, Vector3(1.5, 0.75, 1.7), Vector3(0.0, 0.55, 0.2), mat_pod, Vector3(-14, 0, 0))
+	# Stern wake
+	add_box(root, Vector3(4.6, 0.12, 3.0), Vector3(0.0, 0.08, -6.8), mat_foam)
+
+	return {"root": root, "turret": turret}
