@@ -23,6 +23,16 @@ enum GameState {
 }
 
 const SAVE_PATH: String = "user://beachhead_save.cfg"
+## Saved run (written from the wave-clear screen). On the web user:// lives in the
+## browser's IndexedDB, so it survives reloads and closing the tab.
+const RUN_SAVE_PATH: String = "user://iron_horizon_run.cfg"
+const RUN_SAVE_VERSION: int = 1
+## Turret fields carried in a saved run
+const TURRET_SAVE_FIELDS: Array[String] = [
+	"mg_ammo", "max_mg_ammo", "cannon_ammo", "max_cannon_ammo",
+	"sam_ammo", "max_sam_ammo", "flare_ammo", "max_flare_ammo",
+	"mg_fire_rate_mult", "cannon_reload_mult", "sam_lock_speed_mult",
+]
 
 var state: int = GameState.TITLE
 var sfx: Node
@@ -129,6 +139,7 @@ func _ready() -> void:
 	canvas.add_child(touch)
 
 	_connect_signals()
+	hud.saved_wave = _saved_run_wave()
 	_apply_time_of_day(1)
 	_enter_state(GameState.TITLE)
 
@@ -152,7 +163,7 @@ func _setup_environment() -> void:
 	sun_light.directional_shadow_max_distance = 220.0
 	add_child(sun_light)
 
-func _apply_time_of_day(wave_num: int) -> void:
+func _apply_time_of_day(wave_num: int, announce: bool = true) -> void:
 	var cycle: int = (wave_num - 1) % 4
 	var env: Environment = world_env.environment
 
@@ -224,6 +235,8 @@ func _apply_time_of_day(wave_num: int) -> void:
 			if ocean_mat:
 				ocean_mat.albedo_color = Color(0.02, 0.07, 0.13)
 			turret.set_searchlight_enabled(true)
+			if not announce:
+				return
 			fx.spawn_illumination_flare(Vector3(0.0, 62.0, -68.0))
 			hud.show_banner("NIGHT SIEGE! PRESS [F] TO LAUNCH ILLUMINATION FLARES!", Color(1.0, 0.90, 0.35), 4.2)
 
@@ -232,6 +245,9 @@ func _connect_signals() -> void:
 	hud.next_wave_requested.connect(_on_next_wave)
 	hud.upgrade_purchased.connect(_on_upgrade_purchased)
 	hud.resume_requested.connect(func() -> void: _enter_state(GameState.PLAYING))
+	hud.save_requested.connect(_on_save_requested)
+	hud.continue_requested.connect(_on_continue_requested)
+	hud.main_menu_requested.connect(_on_main_menu_requested)
 	hud.sensitivity_changed.connect(func(v: float) -> void: turret.mouse_sensitivity = v)
 
 	combat.enemy_killed.connect(_on_enemy_killed)
@@ -341,6 +357,7 @@ func _on_upgrade_purchased(upgrade_id: String, cost: int) -> void:
 
 	score -= cost
 	hud.score = score
+	hud.shop_saved = false
 	sfx.play("supply_pickup", 0.0, 1.0)
 	hud.set_menu_state("shop")
 
@@ -424,7 +441,97 @@ func _on_wave_completed() -> void:
 			high_score = score
 			hud.high_score = high_score
 			_save_high_score()
+		hud.shop_saved = false
 		_enter_state(GameState.SHOP)
+
+func _on_save_requested() -> void:
+	if state != GameState.SHOP:
+		return
+	if _save_run():
+		hud.shop_saved = true
+		hud.saved_wave = current_wave
+		sfx.play("supply_pickup", -2.0, 1.2)
+		hud.set_menu_state("shop")
+	else:
+		sfx.play("ricochet", -3.0, 0.8)
+		hud.show_banner("SAVE FAILED — BROWSER STORAGE UNAVAILABLE?", Color(1.0, 0.35, 0.25), 3.5)
+
+## Leave the current run (pause, wave-clear or game-over screen) for the title screen
+func _on_main_menu_requested() -> void:
+	combat.clear_all()
+	fx.clear_all()
+	_save_high_score()
+	hud.saved_wave = _saved_run_wave()
+	turret.reset_for_new_game()
+	# Title screen shows a fresh bunker, not the abandoned run's numbers
+	bunker_max_hp = 100.0
+	bunker_hp = 100.0
+	score = 0
+	streak = 0
+	multiplier = 1
+	current_wave = 1
+	hud.reset_run_display()
+	_apply_time_of_day(1, false)
+	_enter_state(GameState.TITLE)
+
+func _save_run() -> bool:
+	var cfg := ConfigFile.new()
+	cfg.set_value("run", "version", RUN_SAVE_VERSION)
+	cfg.set_value("run", "wave", current_wave)
+	cfg.set_value("run", "score", score)
+	cfg.set_value("run", "bunker_hp", bunker_hp)
+	cfg.set_value("run", "bunker_max_hp", bunker_max_hp)
+	cfg.set_value("run", "wave_heading", combat.wave_heading)
+	for f in TURRET_SAVE_FIELDS:
+		cfg.set_value("turret", f, turret.get(f))
+	cfg.set_value("turret", "heavy_gun", turret.heavy_gun)
+	cfg.set_value("turret", "current_weapon", turret.current_weapon)
+	return cfg.save(RUN_SAVE_PATH) == OK
+
+## Wave the saved run had cleared, or 0 when there is no usable save
+func _saved_run_wave() -> int:
+	var cfg := ConfigFile.new()
+	if cfg.load(RUN_SAVE_PATH) != OK:
+		return 0
+	if int(cfg.get_value("run", "version", 0)) != RUN_SAVE_VERSION:
+		return 0
+	return maxi(0, int(cfg.get_value("run", "wave", 0)))
+
+## Restore a saved run onto its wave-clear screen, so the player can shop and deploy
+func _on_continue_requested() -> void:
+	var cfg := ConfigFile.new()
+	if _saved_run_wave() <= 0 or cfg.load(RUN_SAVE_PATH) != OK:
+		hud.saved_wave = 0
+		hud.set_menu_state("title")
+		return
+	fx.clear_all()
+	combat.clear_all()
+	turret.reset_for_new_game()
+	for f in TURRET_SAVE_FIELDS:
+		turret.set(f, cfg.get_value("turret", f, turret.get(f)))
+	turret.set_heavy_gun(bool(cfg.get_value("turret", "heavy_gun", false)))
+	turret.current_weapon = int(cfg.get_value("turret", "current_weapon", 0))
+	turret.weapon_switched.emit(turret.get_current_weapon_name())
+	turret.ammo_changed.emit()
+
+	current_wave = int(cfg.get_value("run", "wave", 1))
+	score = int(cfg.get_value("run", "score", 0))
+	bunker_max_hp = float(cfg.get_value("run", "bunker_max_hp", 100.0))
+	bunker_hp = float(cfg.get_value("run", "bunker_hp", bunker_max_hp))
+	combat.current_wave = current_wave
+	combat.wave_heading = float(cfg.get_value("run", "wave_heading", 0.0))
+	streak = 0
+	multiplier = 1
+	hud.current_wave = current_wave
+	hud.score = score
+	hud.bunker_hp = bunker_hp
+	hud.bunker_max_hp = bunker_max_hp
+	hud.streak = streak
+	hud.multiplier = multiplier
+	hud.wave_killed = 0
+	_apply_time_of_day(current_wave, false)
+	hud.shop_saved = true
+	_enter_state(GameState.SHOP)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if state != GameState.PLAYING:
@@ -530,7 +637,9 @@ func _publish_test_state() -> void:
 		var p: Vector2 = xf * b["pos"]
 		buttons[b["id"]] = [p.x, p.y, b["r"] * xf.x.x]
 	var rects: Dictionary = {}
-	for pair in [["start", hud.start_button], ["resume", hud.resume_button]]:
+	for pair in [["start", hud.start_button], ["resume", hud.resume_button], ["continue", hud.continue_button],
+			["save", hud.save_button], ["pause_menu", hud.pause_menu_button],
+			["shop_menu", hud.shop_menu_button], ["gameover_menu", hud.gameover_menu_button]]:
 		var btn: Control = pair[1]
 		if is_instance_valid(btn) and btn.is_visible_in_tree():
 			var r: Rect2 = btn.get_global_rect()
