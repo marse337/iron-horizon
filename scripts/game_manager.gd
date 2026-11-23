@@ -280,6 +280,7 @@ func _enter_state(new_state: int) -> void:
 	render_scaler.set_measuring(state == GameState.PLAYING)
 	match state:
 		GameState.TITLE:
+			turret.set_zoom(false, true)
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 			hud.set_menu_state("title")
 		GameState.PLAYING:
@@ -289,6 +290,7 @@ func _enter_state(new_state: int) -> void:
 				Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 			hud.set_menu_state("none")
 		GameState.SHOP:
+			turret.set_zoom(false, true)
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 			hud.set_menu_state("shop")
 		GameState.PAUSED:

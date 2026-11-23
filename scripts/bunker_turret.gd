@@ -55,6 +55,11 @@ var overdrive_timer: float = 0.0
 # 155mm Coastal Gun (shop upgrade) replaces the 105mm and can hole landing craft
 var heavy_gun: bool = false
 
+## Scope zoom (touch only: tap the crosshair to toggle)
+const FOV_NORMAL: float = 68.0
+const FOV_ZOOMED: float = 30.0
+var zoomed: bool = false
+
 # Cooldowns & barrel animation
 var _fire_cooldown: float = 0.0
 var _cannon_cooldown: float = 0.0
@@ -148,6 +153,7 @@ func _build_turret_cockpit() -> void:
 	pitch_pivot.add_child(searchlight)
 
 func reset_for_new_game() -> void:
+	set_zoom(false, true)
 	yaw = 0.0
 	pitch = -0.05
 	rotation.y = yaw
@@ -207,8 +213,27 @@ func set_searchlight_enabled(enabled: bool) -> void:
 		searchlight.visible = enabled
 
 func apply_mouse_delta(relative: Vector2) -> void:
-	yaw = wrapf(yaw - relative.x * mouse_sensitivity, -PI, PI)
-	pitch = clampf(pitch - relative.y * mouse_sensitivity, deg_to_rad(-40.0), deg_to_rad(72.0))
+	# Aim slows down with the zoom so a drag still moves the view the same
+	# distance on screen (1.0 when not zoomed)
+	var sens: float = mouse_sensitivity * get_zoom_factor()
+	yaw = wrapf(yaw - relative.x * sens, -PI, PI)
+	pitch = clampf(pitch - relative.y * sens, deg_to_rad(-40.0), deg_to_rad(72.0))
+
+func set_zoom(on: bool, instant: bool = false) -> void:
+	zoomed = on
+	if instant and camera:
+		camera.fov = FOV_ZOOMED if on else FOV_NORMAL
+
+func toggle_zoom() -> void:
+	set_zoom(not zoomed)
+	if sfx:
+		sfx.play("ricochet", -14.0, 1.9 if zoomed else 1.5)
+
+## Current field of view relative to normal (< 1 while zoomed in)
+func get_zoom_factor() -> float:
+	if camera == null:
+		return 1.0
+	return tan(deg_to_rad(camera.fov) * 0.5) / tan(deg_to_rad(FOV_NORMAL) * 0.5)
 
 func add_shake(amount: float) -> void:
 	camera_shake = clampf(camera_shake + amount, 0.0, 1.0)
@@ -249,6 +274,11 @@ func get_cannon_reload_ratio() -> float:
 	return clampf(1.0 - (_cannon_cooldown / (_cannon_cooldown_max / cannon_reload_mult)), 0.0, 1.0)
 
 func process_turret(delta: float, is_firing_primary: bool, fire_sam_pressed: bool, fire_flare_pressed: bool) -> void:
+	var target_fov: float = FOV_ZOOMED if zoomed else FOV_NORMAL
+	if not is_equal_approx(camera.fov, target_fov):
+		camera.fov = lerpf(camera.fov, target_fov, 1.0 - exp(-delta * 14.0))
+		if absf(camera.fov - target_fov) < 0.05:
+			camera.fov = target_fov
 	var key_aim := Vector2.ZERO
 	if Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_A):
 		key_aim.x -= 1.0

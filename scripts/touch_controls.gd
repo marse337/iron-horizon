@@ -30,6 +30,13 @@ var _last_pos: Dictionary = {}
 ## events (move/down/up) just after a tap, which the game must ignore
 var last_touch_msec: int = -100000
 
+## A quick tap (no drag) on the crosshair in the middle of the screen toggles zoom.
+## Touches there still aim when dragged, so this never steals an aim.
+const ZOOM_TAP_RADIUS: float = 80.0
+const ZOOM_TAP_MAX_MSEC: int = 400
+const ZOOM_TAP_MAX_MOVE: float = 18.0
+var _zoom_tap: Dictionary = {} # touch index -> {"start": Vector2, "msec": int, "moved": float}
+
 func is_recent_touch() -> bool:
 	return not _touches.is_empty() or Time.get_ticks_msec() - last_touch_msec < 800
 var _flash: Dictionary = {}   # button id -> remaining highlight time
@@ -54,6 +61,7 @@ func set_active(on: bool) -> void:
 	if not on:
 		_touches.clear()
 		_last_pos.clear()
+		_zoom_tap.clear()
 		fire_held = false
 
 func consume_fire_tap() -> bool:
@@ -104,6 +112,8 @@ func _input(event: InputEvent) -> void:
 			var id: String = _hit_button(event.position)
 			_touches[event.index] = id
 			_last_pos[event.index] = event.position
+			if id == "aim" and event.position.distance_to(get_viewport_rect().size * 0.5) <= ZOOM_TAP_RADIUS:
+				_zoom_tap[event.index] = {"msec": Time.get_ticks_msec(), "moved": 0.0}
 			_flash[id] = 0.18
 			match id:
 				"fire":
@@ -122,11 +132,19 @@ func _input(event: InputEvent) -> void:
 			var released: String = _touches.get(event.index, "")
 			_touches.erase(event.index)
 			_last_pos.erase(event.index)
+			var zt: Dictionary = _zoom_tap.get(event.index, {})
+			_zoom_tap.erase(event.index)
+			if released == "aim" and active and not zt.is_empty() \
+					and zt["moved"] <= ZOOM_TAP_MAX_MOVE \
+					and Time.get_ticks_msec() - int(zt["msec"]) <= ZOOM_TAP_MAX_MSEC:
+				turret.toggle_zoom()
 			if released == "fire":
 				fire_held = _touches.values().has("fire")
 	elif event is InputEventScreenDrag and active:
 		if _touches.get(event.index, "") == "aim" and _last_pos.has(event.index):
 			var delta: Vector2 = event.position - _last_pos[event.index]
+			if _zoom_tap.has(event.index):
+				_zoom_tap[event.index]["moved"] += delta.length()
 			turret.apply_mouse_delta(delta * aim_sensitivity_mult)
 		_last_pos[event.index] = event.position
 		get_viewport().set_input_as_handled()

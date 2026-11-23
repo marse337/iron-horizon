@@ -226,6 +226,10 @@ func _draw() -> void:
 
 	_draw_3d_target_overlays(font, vp)
 	_draw_crosshair(center, font)
+	if turret.zoomed:
+		var zt: String = "ZOOM %.1fx" % (1.0 / turret.get_zoom_factor())
+		draw_string_outline(font, center + Vector2(-80, 62), zt, HORIZONTAL_ALIGNMENT_CENTER, 160.0, 15, 4, XH_OUTLINE)
+		draw_string(font, center + Vector2(-80, 62), zt, HORIZONTAL_ALIGNMENT_CENTER, 160.0, 15, Color(0.45, 1.0, 0.38))
 	_draw_top_compass_and_wave(vp, font)
 	_draw_bottom_left_status(vp, font)
 	_draw_radar_scope(vp, font)
@@ -697,7 +701,8 @@ func _build_menus_compact() -> void:
 		"FIRE — hold to shoot\n" +
 		"SWAP — machine gun / cannon\n" +
 		"SAM — missile for aircraft\n" +
-		"FLARE — light up night waves",
+		"FLARE — light up night waves\n" +
+		"TAP CROSSHAIR — zoom in / out",
 		26, col_text)
 	_add_label(tv, "Tanks shrug off the machine gun: use the cannon.", 20, Color(1.0, 0.75, 0.4))
 	var title_row := HBoxContainer.new()
