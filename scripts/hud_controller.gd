@@ -11,6 +11,9 @@ signal start_mission_requested()
 signal next_wave_requested()
 signal upgrade_purchased(upgrade_id: String, cost: int)
 signal resume_requested()
+signal save_requested()
+signal continue_requested()
+signal main_menu_requested()
 signal sensitivity_changed(new_sens: float)
 
 var turret: Node3D
@@ -40,6 +43,17 @@ var _coastal_gun_btn: Button
 # Exposed for the web test hook (tools/mobile-test)
 var start_button: Button
 var resume_button: Button
+var continue_button: Button
+var save_button: Button
+var pause_menu_button: Button
+var shop_menu_button: Button
+var gameover_menu_button: Button
+## Wave number of the saved run (0 = no saved game); shown on the title screen
+var saved_wave: int = 0
+## True while the wave-clear screen matches what is on disk (nothing to lose by quitting)
+var shop_saved: bool = false
+# Buttons that need a second tap to confirm (reset whenever a menu opens)
+var _confirm_buttons: Array[Button] = []
 var _banner_text: String = ""
 var _banner_color: Color = Color(1.0, 0.88, 0.25)
 var _banner_timer: float = 0.0
@@ -65,6 +79,20 @@ func show_banner(text: String, color: Color = Color(1.0, 0.88, 0.25), duration: 
 	_banner_text = text
 	_banner_color = color
 	_banner_timer = duration
+
+## Back to a fresh-bunker readout (used when quitting a run to the title screen)
+func reset_run_display() -> void:
+	bunker_hp = 100.0
+	bunker_max_hp = 100.0
+	score = 0
+	streak = 0
+	multiplier = 1
+	current_wave = 1
+	wave_killed = 0
+	wave_total = 20
+	_banner_timer = 0.0
+	_damage_flash = 0.0
+	_floating_texts.clear()
 
 func trigger_hitmarker() -> void:
 	_hitmarker_timer = 0.14
@@ -116,6 +144,23 @@ func set_menu_state(state: String) -> void:
 	shop_panel.visible = (state == "shop")
 	pause_panel.visible = (state == "pause")
 	gameover_panel.visible = (state == "gameover")
+	for b in _confirm_buttons:
+		if is_instance_valid(b):
+			b.set_meta("armed", false)
+			b.text = b.get_meta("idle_text")
+	if state == "title" and is_instance_valid(continue_button):
+		continue_button.visible = saved_wave > 0
+		if touch_mode:
+			continue_button.text = "CONTINUE\nWAVE %d" % (saved_wave + 1)
+		else:
+			continue_button.text = "CONTINUE SAVED GAME (WAVE %d CLEARED — DEPLOY TO WAVE %d)" % [saved_wave, saved_wave + 1]
+		start_button.text = ("NEW GAME" if saved_wave > 0 else "START") if touch_mode \
+				else "CLICK TO MAN THE BUNKER (START WAVE 1)" if saved_wave == 0 else "NEW GAME (START WAVE 1)"
+	if state == "shop" and is_instance_valid(save_button):
+		if shop_saved:
+			save_button.text = "SAVED" if touch_mode else "GAME SAVED"
+		else:
+			save_button.text = "SAVE" if touch_mode else "SAVE GAME"
 	if state == "shop" and is_instance_valid(_coastal_gun_btn) and turret != null:
 		_coastal_gun_btn.disabled = turret.heavy_gun
 		var coastal: Dictionary = _upgrade_defs().filter(func(u: Dictionary) -> bool: return u["id"] == "coastal_gun")[0]
@@ -181,6 +226,10 @@ func _draw() -> void:
 
 	_draw_3d_target_overlays(font, vp)
 	_draw_crosshair(center, font)
+	if turret.zoomed:
+		var zt: String = "ZOOM %.1fx" % (1.0 / turret.get_zoom_factor())
+		draw_string_outline(font, center + Vector2(-80, 62), zt, HORIZONTAL_ALIGNMENT_CENTER, 160.0, 15, 4, XH_OUTLINE)
+		draw_string(font, center + Vector2(-80, 62), zt, HORIZONTAL_ALIGNMENT_CENTER, 160.0, 15, Color(0.45, 1.0, 0.38))
 	_draw_top_compass_and_wave(vp, font)
 	_draw_bottom_left_status(vp, font)
 	_draw_radar_scope(vp, font)
@@ -521,6 +570,7 @@ func _set_touch_mode(on: bool) -> void:
 		for p in [title_panel, shop_panel, pause_panel, gameover_panel]:
 			p.hide()
 			p.queue_free()
+		_confirm_buttons.clear()
 		_build_menus()
 		set_menu_state(_menu_state)
 
@@ -567,6 +617,10 @@ func _build_menus_full() -> void:
 	start_btn.pressed.connect(func() -> void: start_mission_requested.emit())
 	tv.add_child(start_btn)
 	start_button = start_btn
+	continue_button = _make_button("CONTINUE SAVED GAME")
+	continue_button.pressed.connect(func() -> void: continue_requested.emit())
+	tv.add_child(continue_button)
+	tv.move_child(continue_button, start_btn.get_index())
 
 	shop_panel = _make_modal_panel(Vector2(660, 480))
 	var sv := VBoxContainer.new()
@@ -587,6 +641,16 @@ func _build_menus_full() -> void:
 	var next_btn := _make_button("DEPLOY TO NEXT INVASION WAVE >>")
 	next_btn.pressed.connect(func() -> void: next_wave_requested.emit())
 	sv.add_child(next_btn)
+	var shop_row := HBoxContainer.new()
+	shop_row.add_theme_constant_override("separation", 10)
+	sv.add_child(shop_row)
+	save_button = _make_button("SAVE GAME")
+	save_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	save_button.pressed.connect(func() -> void: save_requested.emit())
+	shop_row.add_child(save_button)
+	shop_menu_button = _make_quit_button("MAIN MENU", "UNSAVED — CLICK AGAIN TO QUIT", 15, 42.0, true)
+	shop_menu_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	shop_row.add_child(shop_menu_button)
 
 	pause_panel = _make_modal_panel(Vector2(480, 280))
 	var pv := VBoxContainer.new()
@@ -606,6 +670,8 @@ func _build_menus_full() -> void:
 	resume_btn.pressed.connect(func() -> void: resume_requested.emit())
 	pv.add_child(resume_btn)
 	resume_button = resume_btn
+	pause_menu_button = _make_quit_button("QUIT TO MAIN MENU", "CLICK AGAIN — UNSAVED PROGRESS IS LOST", 15, 42.0)
+	pv.add_child(pause_menu_button)
 
 	gameover_panel = _make_modal_panel(Vector2(540, 280))
 	var gv := VBoxContainer.new()
@@ -616,6 +682,9 @@ func _build_menus_full() -> void:
 	var retry_btn := _make_button("MAN A NEW BUNKER (PLAY AGAIN)")
 	retry_btn.pressed.connect(func() -> void: start_mission_requested.emit())
 	gv.add_child(retry_btn)
+	gameover_menu_button = _make_button("MAIN MENU")
+	gameover_menu_button.pressed.connect(func() -> void: main_menu_requested.emit())
+	gv.add_child(gameover_menu_button)
 
 func _build_menus_compact() -> void:
 	var col_title := Color(0.85, 1.0, 0.55)
@@ -632,12 +701,21 @@ func _build_menus_compact() -> void:
 		"FIRE — hold to shoot\n" +
 		"SWAP — machine gun / cannon\n" +
 		"SAM — missile for aircraft\n" +
-		"FLARE — light up night waves",
+		"FLARE — light up night waves\n" +
+		"TAP CROSSHAIR — zoom in / out",
 		26, col_text)
 	_add_label(tv, "Tanks shrug off the machine gun: use the cannon.", 20, Color(1.0, 0.75, 0.4))
-	start_button = _make_button("START", 32, 80)
+	var title_row := HBoxContainer.new()
+	title_row.add_theme_constant_override("separation", 14)
+	tv.add_child(title_row)
+	continue_button = _make_button("CONTINUE", 28, 92)
+	continue_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	continue_button.pressed.connect(func() -> void: continue_requested.emit())
+	title_row.add_child(continue_button)
+	start_button = _make_button("START", 32, 92)
+	start_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	start_button.pressed.connect(func() -> void: start_mission_requested.emit())
-	tv.add_child(start_button)
+	title_row.add_child(start_button)
 
 	shop_panel = _make_modal_panel(Vector2(820, 0))
 	var sv := VBoxContainer.new()
@@ -659,9 +737,20 @@ func _build_menus_compact() -> void:
 		if u_id == "coastal_gun":
 			_coastal_gun_btn = btn
 		grid.add_child(btn)
+	var shop_row := HBoxContainer.new()
+	shop_row.add_theme_constant_override("separation", 12)
+	sv.add_child(shop_row)
+	save_button = _make_button("SAVE", 26, 76)
+	save_button.custom_minimum_size.x = 170
+	save_button.pressed.connect(func() -> void: save_requested.emit())
+	shop_row.add_child(save_button)
+	shop_menu_button = _make_quit_button("MENU", "QUIT?", 26, 76, true)
+	shop_menu_button.custom_minimum_size.x = 170
+	shop_row.add_child(shop_menu_button)
 	var next_btn := _make_button("NEXT WAVE  >>", 30, 76)
+	next_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	next_btn.pressed.connect(func() -> void: next_wave_requested.emit())
-	sv.add_child(next_btn)
+	shop_row.add_child(next_btn)
 
 	pause_panel = _make_modal_panel(Vector2(600, 0))
 	var pv := VBoxContainer.new()
@@ -680,6 +769,9 @@ func _build_menus_compact() -> void:
 	resume_button = _make_button("RESUME", 32, 80)
 	resume_button.pressed.connect(func() -> void: resume_requested.emit())
 	pv.add_child(resume_button)
+	pause_menu_button = _make_quit_button("MAIN MENU", "TAP AGAIN TO QUIT", 28, 72)
+	pv.add_child(pause_menu_button)
+	_add_label(pv, "Quitting loses progress since your last save.", 18, Color(0.75, 0.82, 0.72))
 
 	gameover_panel = _make_modal_panel(Vector2(640, 0))
 	var gv := VBoxContainer.new()
@@ -687,9 +779,35 @@ func _build_menus_compact() -> void:
 	gameover_panel.add_child(gv)
 	_add_label(gv, "BUNKER DESTROYED", 40, Color(1.0, 0.32, 0.22))
 	gameover_stats_label = _add_label(gv, "", 26, Color(1.0, 0.9, 0.35))
+	var go_row := HBoxContainer.new()
+	go_row.add_theme_constant_override("separation", 14)
+	gv.add_child(go_row)
+	gameover_menu_button = _make_button("MAIN MENU", 28, 80)
+	gameover_menu_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	gameover_menu_button.pressed.connect(func() -> void: main_menu_requested.emit())
+	go_row.add_child(gameover_menu_button)
 	var retry_btn := _make_button("PLAY AGAIN", 32, 80)
+	retry_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	retry_btn.pressed.connect(func() -> void: start_mission_requested.emit())
-	gv.add_child(retry_btn)
+	go_row.add_child(retry_btn)
+
+## A "back to main menu" button that asks for a second tap before quitting, so a
+## stray touch can't throw a run away. With skip_if_saved it quits straight away
+## while the wave-clear screen is already saved.
+func _make_quit_button(txt: String, confirm_txt: String, font_sz: int, height: float, skip_if_saved: bool = false) -> Button:
+	var btn := _make_button(txt, font_sz, height)
+	btn.set_meta("idle_text", txt)
+	btn.set_meta("armed", false)
+	btn.pressed.connect(func() -> void:
+		if btn.get_meta("armed") or (skip_if_saved and shop_saved):
+			btn.set_meta("armed", false)
+			btn.text = txt
+			main_menu_requested.emit()
+		else:
+			btn.set_meta("armed", true)
+			btn.text = confirm_txt)
+	_confirm_buttons.append(btn)
+	return btn
 
 func _make_modal_panel(sz: Vector2) -> PanelContainer:
 	var pc := PanelContainer.new()
