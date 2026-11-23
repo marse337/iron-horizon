@@ -132,6 +132,7 @@ func _build_turret_cockpit() -> void:
 	muzzle_light.position = Vector3(0.0, -0.15, -2.2)
 	muzzle_light.light_color = Color(1.0, 0.78, 0.32)
 	muzzle_light.light_energy = 0.0
+	muzzle_light.visible = false
 	muzzle_light.omni_range = 18.0
 	pitch_pivot.add_child(muzzle_light)
 
@@ -140,6 +141,7 @@ func _build_turret_cockpit() -> void:
 	searchlight.position = Vector3(0.0, 0.35, -0.8)
 	searchlight.light_color = Color(1.0, 0.96, 0.84)
 	searchlight.light_energy = 0.0
+	searchlight.visible = false
 	searchlight.spot_range = 175.0
 	searchlight.spot_angle = 22.0
 	searchlight.spot_attenuation = 0.75
@@ -200,6 +202,9 @@ func grant_supply_crate(is_golden: bool) -> void:
 func set_searchlight_enabled(enabled: bool) -> void:
 	if is_instance_valid(searchlight):
 		searchlight.light_energy = 6.5 if enabled else 0.0
+		# Hidden lights are skipped by the renderer; a zero-energy one may still
+		# get an extra lighting pass in Compatibility, so hide it in daylight
+		searchlight.visible = enabled
 
 func apply_mouse_delta(relative: Vector2) -> void:
 	yaw = wrapf(yaw - relative.x * mouse_sensitivity, -PI, PI)
@@ -292,6 +297,7 @@ func process_turret(delta: float, is_firing_primary: bool, fire_sam_pressed: boo
 		_muzzle_flash_timer -= delta
 		if _muzzle_flash_timer <= 0.0:
 			muzzle_light.light_energy = 0.0
+			muzzle_light.visible = false
 
 	if mg_ammo <= 0 and cannon_ammo <= 0 and current_weapon != PrimaryWeapon.BACKUP_PISTOL:
 		current_weapon = PrimaryWeapon.BACKUP_PISTOL
@@ -343,6 +349,7 @@ func _try_fire_primary() -> void:
 				recoil_kick += 0.032
 				add_shake(0.32)
 				muzzle_light.light_energy = 5.5
+				muzzle_light.visible = true
 				_muzzle_flash_timer = 0.09
 				var muzzle_pos: Vector3 = barrel_cannon.global_position + forward_dir * 1.8
 				combat.spawn_player_projectile("cannon", muzzle_pos, forward_dir)
@@ -355,6 +362,7 @@ func _try_fire_primary() -> void:
 				_fire_cooldown = 0.20
 				recoil_kick += 0.008
 				muzzle_light.light_energy = 2.0
+				muzzle_light.visible = true
 				_muzzle_flash_timer = 0.04
 				var p_origin: Vector3 = camera.global_position + Vector3(0.0, -0.18, 0.0) + forward_dir * 1.1
 				combat.spawn_player_projectile("pistol", p_origin, forward_dir)
@@ -370,6 +378,7 @@ func _fire_dual_barrels(forward_dir: Vector3, proj_kind: String, spread: float) 
 		_right_recoil = 0.16
 	recoil_kick = clampf(recoil_kick + 0.004, 0.0, 0.035)
 	muzzle_light.light_energy = 3.2
+	muzzle_light.visible = true
 	_muzzle_flash_timer = 0.045
 
 	var jitter := Vector3(

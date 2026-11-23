@@ -17,6 +17,10 @@ var _ring_mesh: TorusMesh
 var _box_mesh: BoxMesh
 var _cyl_mesh: CylinderMesh
 
+## Most explosion flash lights alive at once (-1 = unlimited). Lowered on mobile.
+var max_flash_lights: int = -1
+var _flash_lights_alive: int = 0
+
 func _ready() -> void:
 	_sphere_mesh = SphereMesh.new()
 	_sphere_mesh.radial_segments = 12
@@ -41,6 +45,7 @@ func clear_all() -> void:
 		if is_instance_valid(fx["node"]):
 			fx["node"].queue_free()
 	_effects.clear()
+	_flash_lights_alive = 0
 	for d in _debris_chunks:
 		if is_instance_valid(d["node"]):
 			d["node"].queue_free()
@@ -86,11 +91,14 @@ func spawn_explosion(pos: Vector3, scale_factor: float = 1.0, is_heavy: bool = f
 	root.add_child(ring)
 
 	# Dynamic flash OmniLight3D for night/dusk drama
-	var flash := OmniLight3D.new()
-	flash.light_color = Color(1.0, 0.65, 0.2)
-	flash.light_energy = 4.5 * scale_factor
-	flash.omni_range = 28.0 * scale_factor
-	root.add_child(flash)
+	var flash: OmniLight3D = null
+	if max_flash_lights < 0 or _flash_lights_alive < max_flash_lights:
+		flash = OmniLight3D.new()
+		flash.light_color = Color(1.0, 0.65, 0.2)
+		flash.light_energy = 4.5 * scale_factor
+		flash.omni_range = 28.0 * scale_factor
+		root.add_child(flash)
+		_flash_lights_alive += 1
 
 	_effects.append({
 		"node": root,
@@ -242,6 +250,8 @@ func _process(delta: float) -> void:
 		if t >= 1.0 or not is_instance_valid(fx["node"]):
 			if is_instance_valid(fx["node"]):
 				fx["node"].queue_free()
+			if fx.get("flash") != null:
+				_flash_lights_alive -= 1
 			_effects.remove_at(i)
 			continue
 

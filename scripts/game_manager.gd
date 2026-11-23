@@ -12,6 +12,7 @@ const CombatManagerScript = preload("res://scripts/combat_manager.gd")
 const BunkerTurretScript = preload("res://scripts/bunker_turret.gd")
 const HudControllerScript = preload("res://scripts/hud_controller.gd")
 const TouchControlsScript = preload("res://scripts/touch_controls.gd")
+const RenderScalerScript = preload("res://scripts/render_scaler.gd")
 
 enum GameState {
 	TITLE,
@@ -30,6 +31,9 @@ var combat: Node3D
 var turret: Node3D
 var hud: Control
 var touch: Control
+var render_scaler: Node
+## Phone or tablet (including iPads, whose Safari pretends to be a Mac)
+var is_mobile_device: bool = false
 
 var world_env: WorldEnvironment
 var sun_light: DirectionalLight3D
@@ -63,11 +67,16 @@ func _ready() -> void:
 		get_tree().process_frame.connect(func() -> void:
 			JavaScriptBridge.eval("window.__ihGameStarted && window.__ihGameStarted()", true),
 			CONNECT_ONE_SHOT)
-	if OS.has_feature("web_ios") or OS.has_feature("web_android"):
-		# Phones run this at 2-3x pixel density; drop MSAA and halve the shadow map
-		# to ease GPU memory pressure (iOS Safari is strict about it)
+	is_mobile_device = _detect_mobile_device()
+	if is_mobile_device:
+		# Phones and tablets run this at 2-3x pixel density; drop MSAA and halve the
+		# shadow map to ease GPU load and memory pressure (iOS Safari is strict about it)
 		get_viewport().msaa_3d = Viewport.MSAA_DISABLED
 		RenderingServer.directional_shadow_atlas_set_size(1024, true)
+	render_scaler = RenderScalerScript.new()
+	render_scaler.name = "RenderScaler"
+	render_scaler.enabled = is_mobile_device
+	add_child(render_scaler)
 	_setup_environment()
 
 	var env_refs: Dictionary = UnitFactoryScript.build_battlefield(self)
@@ -80,6 +89,10 @@ func _ready() -> void:
 
 	fx = ExplosionManagerScript.new()
 	fx.name = "ExplosionManager"
+	if is_mobile_device:
+		# Each light is an extra full pass over every mesh it touches in the
+		# Compatibility renderer; a busy wave could stack a dozen of them
+		fx.max_flash_lights = 2
 	add_child(fx)
 
 	combat = CombatManagerScript.new()
@@ -248,6 +261,7 @@ func _enter_state(new_state: int) -> void:
 	state = new_state
 	_mouse_fire_held = false
 	touch.set_active(state == GameState.PLAYING)
+	render_scaler.set_measuring(state == GameState.PLAYING)
 	match state:
 		GameState.TITLE:
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
@@ -486,6 +500,16 @@ func _process(delta: float) -> void:
 		if state == GameState.TITLE and turret != null:
 			turret.yaw = sin(_wave_time * 0.25) * 0.45
 			turret.rotation.y = turret.yaw
+
+static func _detect_mobile_device() -> bool:
+	if OS.has_feature("mobile") or OS.has_feature("web_ios") or OS.has_feature("web_android"):
+		return true
+	if OS.has_feature("web"):
+		# iPadOS Safari sends a desktop Mac user agent by default, so Godot's
+		# web_ios feature is false on iPads. A "Mac" with multi-touch is an iPad.
+		return bool(JavaScriptBridge.eval(
+				"/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1", true))
+	return false
 
 func _load_high_score() -> void:
 	var cfg := ConfigFile.new()
